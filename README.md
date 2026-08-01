@@ -2,7 +2,10 @@
 
 Field notes on **AWS · Azure · GCP · Linux · DevOps** by [Ravichandra](https://github.com/ravichandrapatel).
 
-**Live site:** https://ravichandrapatel.github.io/cloud-dispatch/
+**Live site:** https://ravichandrapatel.github.io/
+
+> GitHub repo name is `ravichandrapatel.github.io` (required for the apex user site).
+> Local folder stays `cloud-dispatch` for convenience.
 
 Stack: [Astro](https://astro.build) → GitHub Actions → GitHub Pages.
 

@@ -1,9 +1,10 @@
 // @ts-check
 import { defineConfig } from "astro/config";
 
-// Project Pages: https://ravichandrapatel.github.io/cloud-dispatch/
+// User site (repo must be ravichandrapatel.github.io):
+// https://ravichandrapatel.github.io/
 export default defineConfig({
   site: "https://ravichandrapatel.github.io",
-  base: "/cloud-dispatch",
+  base: "/",
   trailingSlash: "always",
 });
