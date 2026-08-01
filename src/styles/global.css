@@ -257,11 +257,115 @@ img {
   margin: 0 0 1rem;
 }
 
+.prose h2 {
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  margin: 2.4rem 0 0.85rem;
+  letter-spacing: -0.02em;
+}
+
+.prose h3 {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  margin: 1.75rem 0 0.6rem;
+}
+
 .prose .meta {
   font-family: var(--font-mono);
   font-size: 0.78rem;
   color: var(--ink-dim);
   margin-bottom: 2rem;
+}
+
+.prose :where(p, ul, ol) {
+  margin: 0 0 1rem;
+}
+
+.prose :where(ul, ol) {
+  padding-left: 1.25rem;
+}
+
+.prose :where(li) {
+  margin: 0.3rem 0;
+}
+
+.prose :where(code) {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: color-mix(in srgb, var(--bg-2) 80%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.08em 0.35em;
+}
+
+.prose :where(pre) {
+  margin: 1.1rem 0 1.35rem;
+  padding: 0.95rem 1rem;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-0) 75%, #000);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.prose :where(pre code) {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  border-radius: 0;
+}
+
+/* Markdown tables */
+.prose :where(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.15rem 0 1.5rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  table-layout: fixed;
+}
+
+.prose :where(th),
+.prose :where(td) {
+  border: 1px solid var(--line);
+  padding: 0.55rem 0.7rem;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.prose :where(th) {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--bg-2) 88%, #000);
+}
+
+.prose :where(td) {
+  color: var(--ink-dim);
+  background: color-mix(in srgb, var(--bg-1) 50%, transparent);
+}
+
+.prose :where(tbody tr:nth-child(even) td) {
+  background: color-mix(in srgb, var(--bg-2) 35%, transparent);
+}
+
+.prose :where(td code) {
+  font-size: 0.82em;
+}
+
+@media (max-width: 640px) {
+  .prose :where(table) {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    table-layout: auto;
+  }
 }
 
 .empty-state {
