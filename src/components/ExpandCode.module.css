@@ -1,0 +1,86 @@
+.wrap {
+  margin: 1.25rem 0 1.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-2) 55%, transparent);
+  overflow: hidden;
+}
+
+.trigger {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0;
+  padding: 0.9rem 1.1rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.trigger:hover {
+  background: color-mix(in srgb, var(--bg-2) 90%, #000);
+}
+
+.trigger[aria-expanded="true"] {
+  border-bottom: 1px solid var(--line);
+}
+
+.chevron {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.chevron[data-open] {
+  transform: rotate(45deg);
+  margin-top: -0.15rem;
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+}
+
+.hint {
+  color: var(--ink-dim);
+  font-size: 0.72rem;
+  flex-shrink: 0;
+}
+
+.body {
+  padding: 0 0.85rem 0.85rem;
+}
+
+.pre {
+  margin: 0.85rem 0 0;
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  max-height: min(70vh, 36rem);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-0) 75%, #000);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.pre code {
+  font: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  white-space: pre;
+}

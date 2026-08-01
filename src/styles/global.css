@@ -323,6 +323,16 @@ img {
   line-height: 1.55;
 }
 
+/* Command + result pairs read as one block, not two floating cards */
+.prose :where(pre + pre) {
+  margin-top: -0.95rem;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top-color: transparent;
+  background: color-mix(in srgb, var(--bg-1) 80%, #000);
+  color: var(--ink-dim);
+}
+
 /* Confluence-style expand / collapse for long pastes */
 .prose details.expand {
   margin: 1.25rem 0 1.75rem;
