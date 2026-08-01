@@ -1,0 +1,63 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description?: string;
+  path?: string;
+}
+
+const {
+  title,
+  description = "AWS · Azure · GCP · Linux · DevOps — field notes by Ravichandra Patel.",
+  path = "/",
+} = Astro.props;
+
+const base = import.meta.env.BASE_URL;
+const canonical = new URL(path.replace(/^\//, ""), Astro.site);
+const pageTitle = title === "cloud-dispatch" ? title : `${title} · cloud-dispatch`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content={Astro.generator} />
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <title>{pageTitle}</title>
+  </head>
+  <body>
+    <div class="site-shell">
+      <header class="site-header">
+        <a class="brand" href={base}>cloud-<span>dispatch</span></a>
+        <nav class="nav" aria-label="Primary">
+          <a href={base} aria-current={path === "/" ? "page" : undefined}>Home</a>
+          <a href={`${base}posts/`} aria-current={path.startsWith("/posts") ? "page" : undefined}
+            >Posts</a
+          >
+          <a href={`${base}about/`} aria-current={path === "/about/" ? "page" : undefined}
+            >About</a
+          >
+        </nav>
+      </header>
+      <main class="site-main">
+        <slot />
+      </main>
+      <footer class="site-footer">
+        <p>
+          © {new Date().getFullYear()} Ravichandra Patel ·
+          <a href="https://github.com/ravichandrapatel/cloud-dispatch">source</a>
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>
