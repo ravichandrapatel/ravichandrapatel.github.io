@@ -1,6 +1,6 @@
 # cloud-dispatch
 
-Field notes on **AWS · Azure · GCP · Linux · DevOps** by [Ravichandra Patel](https://github.com/ravichandrapatel).
+Field notes on **AWS · Azure · GCP · Linux · DevOps** by [Ravichandra](https://github.com/ravichandrapatel).
 
 **Live site:** https://ravichandrapatel.github.io/cloud-dispatch/
 

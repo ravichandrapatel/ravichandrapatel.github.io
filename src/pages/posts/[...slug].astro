@@ -24,7 +24,7 @@ const { Content } = await render(post);
     <p class="meta">
       {post.data.pubDate.toISOString().slice(0, 10)}
       {" · "}
-      Ravichandra Patel
+      Ravichandra
       {post.data.tags.length > 0 ? ` · ${post.data.tags.join(", ")}` : ""}
     </p>
     <Content />
