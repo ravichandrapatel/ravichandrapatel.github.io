@@ -1,6 +1,6 @@
 ---
 title: "Building a Vault Hub for my IDP on OSS"
-description: "My journey standing up a central HashiCorp Vault on OSS for a multi-tenant IDP — decisions, kind install with outputs, Vault UI, universal policy, and the ACL footgun."
+description: "Standing up a central HashiCorp Vault on OSS for a multi-tenant IDP — issue, architecture, kind validation with outputs and UI, footguns, pros and cons."
 pubDate: 2026-08-01
 updatedDate: 2026-08-01
 tags: [vault, kubernetes, secrets, notes]
@@ -9,15 +9,19 @@ draft: false
 
 import VaultK8sAuthFlow from "../../components/diagrams/VaultK8sAuthFlow.tsx";
 
+## 1. Intro and Issue
+
 I am currently working on building my own IDP. While debating the architecture I hit a familiar question: where do secrets live?
 
 I went through a lot of documentation and blogs and eventually narrowed it to Vault. I have been using Vault Enterprise across multiple projects for the past five years, so I want to pull those same principles into this IDP setup. Naturally I do not have the budget for an Enterprise license right now, so I am on Vault OSS. I know what is missing compared to Enterprise — namespaces, native DR replication, performance standbys that actually serve reads. Some of that I can approximate. Some of it I cannot. That is fine. I still want the operational shape I am used to.
 
 Went back to the drawing board. During research one gap stood out: almost nobody writes clearly about **how to kill policy sprawl** when you are stuck on OSS and still need multi-tenant isolation.
 
-These notes are my journey. First the decisions, then how auth is supposed to look, then the kind lab with the commands **and the outputs I got**, including the Vault UI.
+These notes walk that problem end to end: what I decided, how I validated it on kind (commands, outputs, and the Vault UI), what broke, and what I would trade off again.
 
-## 1. Decisions
+## 2. Architecture and Decision
+
+### Central hub, not a Vault per team
 
 When building an IDP I do not want a separate Vault instance per team. I need a **central Vault** that runs where the IDP control plane lives. Application teams, other clusters, and VMs authenticate into that same broker.
 
@@ -25,27 +29,15 @@ I am selecting a **three-node** Vault for real environments. Raft leader electio
 
 On OSS, multi-tenant isolation is **path convention + policies**. Namespaces and native DR stay Enterprise — I label that honestly.
 
-Operational principles I am locking:
+![Hub topology — clusters auth in; IdP for humans; short-lived creds out](/posts/vault-hub/architecture.png)
+
+### Principles
 
 1. **Identity first** — login lands on an Identity Entity with metadata.
 2. **Policy minimalism** — one universal policy template driven by that metadata.
 3. **Zero static credentials** in the workloads — short-lived machine auth, cloud KMS auto-unseal in real clusters, humans on OIDC.
 
-![Hub topology — clusters auth in; IdP for humans; short-lived creds out](/posts/vault-hub/architecture.png)
-
-## 2. Machine auth — two doors (UI)
-
-I am not creating one auth mount per cluster. I group by trust domain: `k8s-prod`, `k8s-nonprod`, `k8s-platform`. Roles bind `iss` (cluster issuer) and `sub` (namespace:SA).
-
-Toggle these. Watch the trust boundary move.
-
-<VaultK8sAuthFlow client:load />
-
-Native Kubernetes / JWT is the cleaner machine story. AppRole with a secret_id is what I used in the kind lab below, because wiring a fake OIDC issuer into kind was not worth it for a policy proof.
-
-## 3. Metadata, paths, and the universal policy
-
-After auth, Vault stamps the entity:
+### Metadata and path schema
 
 | Metadata | Example | Notes |
 | --- | --- | --- |
@@ -55,15 +47,15 @@ After auth, Vault stamps the entity:
 | `env` | `prod` | lifecycle |
 | `cluster` | `eks-cluster-101` | set at onboarding — not by the pod |
 
-Path layout:
-
 ```text
 {{ou}}-ou/data/{{bu}}/{{app_name}}/{{env}}/*
 ```
 
 Example: `test1-ou/data/finance/payment-api/prod/...`
 
-Universal policy (exact leaf **and** `/*` — that matters):
+### Universal policy
+
+Exact leaf **and** `/*` — both required (see Issues Encountered).
 
 ```hcl
 path "{{identity.entity.metadata.ou}}-ou/data/{{identity.entity.metadata.bu}}/{{identity.entity.metadata.app_name}}/{{identity.entity.metadata.env}}" {
@@ -83,13 +75,226 @@ path "identity/entity/id/{{identity.entity.id}}" {
 }
 ```
 
-Create the entity **with metadata before** the first login. Empty entity first, then “alias already exists,” is a day I have already wasted.
+Create the entity **with metadata before** the first login.
 
-## 4. Lab — kind cluster
+### Machine auth
 
-Dev mode below is **not** three-node Raft. It is how I prove identity → policy → path isolation quickly. Official HA guide still applies for prod: [Vault on Kubernetes](https://developer.hashicorp.com/vault/docs/platform/k8s).
+I am not creating one auth mount per cluster. I group by trust domain: `k8s-prod`, `k8s-nonprod`, `k8s-platform`. Roles bind `iss` (cluster issuer) and `sub` (namespace:SA).
 
-### 4.1 Create the cluster
+Toggle these. Watch the trust boundary move.
+
+<VaultK8sAuthFlow client:load />
+
+Native Kubernetes / JWT is the cleaner machine story. AppRole with a secret_id is what I used in the kind lab, because wiring a fake OIDC issuer into kind was not worth it for a policy proof.
+
+### Production Helm values I am targeting
+
+This is the three-node Raft / dual-disk / TLS-oriented overlay I want outside the lab (seal blocks stay commented until the cloud KMS ARNs are real):
+
+```yaml
+# VAULT production-shaped configuration
+# Platform: EKS primary | GKE & AKS alternatives commented
+
+global:
+  enabled: true
+  tlsDisable: false # E2E TLS enabled
+
+server:
+  replicas: 3
+
+  securityContext:
+    runAsNonRoot: true
+    runAsGroup: 1000
+    runAsUser: 100
+    fsGroup: 1000
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false # required for internal Vault operations
+
+  serviceAccount:
+    create: true
+    name: "vault-server-sa"
+    #annotations:
+      #eks.amazonaws.com/role-arn: "arn:aws:iam::1234567890:role/vault-kms-unseal"
+      # iam.gke.io/gcp-service-account: "vault-server@PROJECT.iam.gserviceaccount.com"
+      # azure.workload.identity/client-id: "AZURE_CLIENT_ID"
+
+  dataStorage:
+    enabled: true
+    size: 1Gi
+    storageClass: "local-path" # AKS: managed-csi-premium-zrs | GKE: premium-rwo
+    mountPath: "/vault/data"
+
+  auditStorage:
+    enabled: true
+    size: 1Gi
+    storageClass: "local-path"
+    mountPath: "/vault/audit"
+
+  ha:
+    enabled: true
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        ui = true
+        storage "raft" {
+          path = "/vault/data"
+          retry_join { leader_api_addr = "http://vault-0.vault-internal:8200" }
+          retry_join { leader_api_addr = "http://vault-1.vault-internal:8200" }
+          retry_join { leader_api_addr = "http://vault-2.vault-internal:8200" }
+        }
+
+        # seal "awskms" {
+        #   region     = "us-east-1"
+        #   kms_key_id = "arn:aws:kms:us-east-1:12345:key/master-unseal"
+        # }
+
+        # seal "gcpkms" {
+        #   project="P"
+        #   region="global"
+        #   key_ring="K"
+        #   crypto_key="V"
+        # }
+
+        # seal "azurekeyvault" {
+        #   tenant_id="tenant_id"
+        #   vault_name="vault-kv"
+        #   key_name="K"
+        # }
+
+        listener "tcp" {
+          address = "[::]:8200"
+          tls_cert_file = "/vault/userconfig/vault-server-tls/tls.crt"
+          tls_key_file  = "/vault/userconfig/vault-server-tls/tls.key"
+          max_request_size = 33554432
+        }
+
+  extraObjects:
+    - apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: vault-audit-init-sa
+    - apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: vault-setup-audit
+      spec:
+        template:
+          spec:
+            serviceAccountName: vault-audit-init-sa
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 1000
+            containers:
+              - name: init
+                image: quay.io/hashicorp/vault:1.17
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities: { drop: ["ALL"] }
+                env:
+                  - name: "VAULT_ADDR"
+                    value: "https://vault-active.vault.svc.cluster.local:8200"
+                  - name: "VAULT_CACERT"
+                    value: "/vault/tls/ca.crt"
+                volumeMounts:
+                  - name: vault-server-tls
+                    mountPath: /vault/tls
+                    readOnly: true
+                command: ["/bin/sh", "-c"]
+                args:
+                  - |
+                    JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                    export VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login role=audit-init-role jwt=$JWT)
+                    vault audit enable file file_path=stdout || true
+                    vault audit enable -path=backup_file file file_path=/vault/audit/backup.log || true
+            volumes:
+              - name: vault-server-tls
+                secret:
+                  secretName: vault-server-tls
+    - apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: vault-backup-sa
+        annotations:
+          eks.amazonaws.com/role-arn: "arn:aws:iam::12345:role/vault-s3-backup-only"
+    - apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: vault-daily-snapshot
+      spec:
+        schedule: "0 2 * * *"
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: vault-backup-sa
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 1000
+                containers:
+                  - name: backup
+                    image: public.ecr.aws/aws-cli/aws-cli:2.24.20
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities: { drop: ["ALL"] }
+                    env:
+                      - name: "VAULT_ADDR"
+                        value: "https://vault-active.vault.svc.cluster.local:8200"
+                      - name: "VAULT_CACERT"
+                        value: "/vault/tls/ca.crt"
+                    volumeMounts:
+                      - name: vault-server-tls
+                        mountPath: /vault/tls
+                        readOnly: true
+                    command: ["/bin/sh", "-c"]
+                    args:
+                      - |
+                        JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                        export VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
+                          role=backup-role \
+                          jwt=$JWT \
+                          type=batch)
+                        STATUS=$(vault status -format=json)
+                        APPLIED=$(echo $STATUS | jq -r '.raft_applied_index')
+                        COMMIT=$(echo $STATUS | jq -r '.raft_committed_index')
+                        if [ $((COMMIT - APPLIED)) -gt 10 ]; then
+                          echo "Cluster lagging. Skipping snapshot."
+                          exit 0
+                        fi
+                        FILE_NAME="vault-$(date +%F-%H%M).snap"
+                        vault operator raft snapshot save /tmp/$FILE_NAME
+                        # aws s3 cp /tmp/$FILE_NAME s3://vault-backups/$FILE_NAME
+                restartPolicy: OnFailure
+                volumes:
+                  - name: vault-server-tls
+                    secret:
+                      secretName: vault-server-tls
+
+  extraVolumes:
+    - type: secret
+      name: vault-server-tls
+
+resources:
+#  requests:
+#    cpu: "2000m"
+#    memory: "4Gi"
+#  limits:
+#    cpu: "4000m"
+#    memory: "8Gi"
+```
+
+For the kind policy proof I intentionally did **not** use that file. Lab values stay tiny and ephemeral (next section).
+
+## 3. Execution and Validation
+
+Dev mode is **not** three-node Raft. It is how I prove identity → policy → path isolation quickly before I burn time on quorum.
+
+### 3.1 kind cluster
 
 ```bash
 export DOCKER_HOST=unix:///var/run/docker.sock   # WSL / odd Docker socket cases
@@ -115,17 +320,9 @@ Set kubectl context to "kind-vault-blog"
 
 ```bash
 kubectl config use-context kind-vault-blog
-kubectl cluster-info
 ```
 
-Output (trimmed):
-
-```text
-Kubernetes control plane is running at https://127.0.0.1:xxxxx
-CoreDNS is running at https://127.0.0.1:xxxxx/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
-```
-
-### 4.2 Install Vault (Helm, UI enabled, lab root token)
+### 3.2 Helm install (lab values)
 
 ```bash
 helm repo add hashicorp https://helm.releases.hashicorp.com
@@ -175,13 +372,11 @@ STATUS: deployed
 REVISION: 1
 ```
 
-### 4.3 Check the pod and services
-
 ```bash
 kubectl -n vault get pods,svc
 ```
 
-Output from my lab:
+Output:
 
 ```text
 NAME          READY   STATUS    RESTARTS   AGE
@@ -213,13 +408,11 @@ Cluster Name    vault-cluster-e7ab2ba8
 HA Enabled      false
 ```
 
-`HA Enabled false` and `inmem` are expected in **dev** mode. That is the trade-off for a fast policy lab.
+`HA Enabled false` and `inmem` are expected in **dev** mode.
 
 ![kind pods and vault status](/posts/vault-hub/kind-vault-pods.png)
 
-## 5. Vault UI
-
-The chart set `ui.enabled: true`. Reach it with a port-forward (NodePort works too if you prefer).
+### 3.3 Vault UI
 
 ```bash
 kubectl -n vault port-forward svc/vault-ui 8200:8200
@@ -232,34 +425,22 @@ Forwarding from 127.0.0.1:8200 -> 8200
 Forwarding from [::1]:8200 -> 8200
 ```
 
-Open a browser: [http://127.0.0.1:8200/ui/](http://127.0.0.1:8200/ui/)
+Browser: [http://127.0.0.1:8200/ui/](http://127.0.0.1:8200/ui/)
 
 1. Method: **Token**
-2. Token: `root` (lab only — never do this in prod)
+2. Token: `root` (lab only)
 3. Sign in
 
 ![Vault UI sign-in — Method Token](/posts/vault-hub/vault-ui-login.png)
 
-After sign-in you land on the dashboard. You should already see engines including the default `secret/` mount. We will add `test1-ou/` next from the CLI, then confirm it in the UI.
-
 ![Vault UI dashboard after root token login](/posts/vault-hub/vault-ui-dashboard.png)
 
-Vault will warn you that a root token is not stored in the browser. Good. Lab only.
-
-## 6. CLI — configure tenancy
-
-Keep the UI port-forward running, or open a second terminal for the CLI. Easiest from inside the pod:
+### 3.4 KV, policy, entity, AppRole proof
 
 ```bash
 kubectl -n vault exec -it vault-0 -- sh
 export VAULT_TOKEN=root
-```
 
-Or from your laptop (needs `vault` CLI + another port-forward to `svc/vault`).
-
-### 6.1 Enable KV v2 and write demo secrets
-
-```bash
 vault secrets enable -path=test1-ou kv-v2
 ```
 
@@ -280,13 +461,11 @@ Output:
 ============= Secret Path =============
 test1-ou/data/finance/payment-api/prod
 ======= Metadata =======
-...
 version            1
 
 ========== Secret Path ==========
 test1-ou/data/finance/shared/prod
 ======= Metadata =======
-...
 version            1
 ```
 
@@ -306,17 +485,11 @@ sys/               system       system endpoints...
 test1-ou/          kv           n/a
 ```
 
-### 6.2 Confirm the same thing in the UI
-
-Refresh **Secrets → Secrets engines**. You should see `test1-ou/`.
+UI check — **Secrets → Secrets engines** shows `test1-ou/`. Open it and you see `finance/`.
 
 ![Secrets engines list including test1-ou](/posts/vault-hub/vault-ui-secrets.png)
 
-Open `test1-ou`. You should see the `finance/` folder.
-
 ![test1-ou KV mount — finance/ folder](/posts/vault-hub/vault-ui-test1-ou.png)
-
-### 6.3 Write the universal policy
 
 ```bash
 cat > /tmp/universal.hcl <<'EOF'
@@ -347,14 +520,6 @@ Success! Uploaded policy: universal-nested-policy
 ```
 
 ```bash
-vault policy read universal-nested-policy
-```
-
-Output: the HCL you just wrote (same paths as section 3).
-
-### 6.4 Create the identity entity (metadata first)
-
-```bash
 vault write identity/entity name="payment-api-prod" \
   metadata=ou=test1 \
   metadata=bu=finance \
@@ -367,7 +532,6 @@ Output:
 ```text
 Key        Value
 ---        -----
-aliases    <nil>
 id         f03f9620-3fb1-a813-4deb-17726adcf3c2
 name       payment-api-prod
 ```
@@ -377,7 +541,7 @@ vault write -format=json identity/lookup/entity name=payment-api-prod \
   | python3 -c 'import sys,json; d=json.load(sys.stdin)["data"]; print(d["id"]); print(d["metadata"])'
 ```
 
-Output from my lab:
+Output:
 
 ```text
 f03f9620-3fb1-a813-4deb-17726adcf3c2
@@ -386,19 +550,8 @@ f03f9620-3fb1-a813-4deb-17726adcf3c2
 
 ![entity metadata in the lab](/posts/vault-hub/identity-and-policy.png)
 
-### 6.5 AppRole login — allow and deny
-
 ```bash
 vault auth enable approle
-```
-
-Output:
-
-```text
-Success! Enabled approle auth method at: approle/
-```
-
-```bash
 vault write auth/approle/role/payment-api \
   token_policies=universal-nested-policy \
   token_ttl=5m token_max_ttl=10m \
@@ -408,11 +561,12 @@ vault write auth/approle/role/payment-api \
 Output:
 
 ```text
+Success! Enabled approle auth method at: approle/
 Success! Data written to: auth/approle/role/payment-api
 ```
 
 ```bash
-ENTITY_ID=f03f9620-3fb1-a813-4deb-17726adcf3c2   # from lookup above
+ENTITY_ID=f03f9620-3fb1-a813-4deb-17726adcf3c2
 ROLE_ID=$(vault read -field=role_id auth/approle/role/payment-api/role-id)
 SECRET_ID=$(vault write -f -field=secret_id auth/approle/role/payment-api/secret-id)
 MOUNT_ACCESSOR=$(vault auth list -format=json \
@@ -423,19 +577,7 @@ echo "ROLE_ID=$ROLE_ID"
 vault write identity/entity-alias name="$ROLE_ID" \
   canonical_id="$ENTITY_ID" \
   mount_accessor="$MOUNT_ACCESSOR"
-```
 
-Output (example):
-
-```text
-ROLE_ID=1968c12e-9aaf-1f57-106e-d1065835bc3d
-Key             Value
----             -----
-canonical_id    f03f9620-3fb1-a813-4deb-17726adcf3c2
-id              c7f2b771-92ca-19b8-8239-a9d23f1d4826
-```
-
-```bash
 TOKEN=$(vault write -field=token auth/approle/login \
   role_id="$ROLE_ID" secret_id="$SECRET_ID")
 
@@ -445,6 +587,7 @@ VAULT_TOKEN=$TOKEN vault kv get test1-ou/finance/payment-api/prod
 Output (ALLOW):
 
 ```text
+ROLE_ID=1968c12e-9aaf-1f57-106e-d1065835bc3d
 ============= Secret Path =============
 test1-ou/data/finance/payment-api/prod
 
@@ -472,35 +615,7 @@ Code: 403. Errors:
 
 ![allow own path, deny cross-app](/posts/vault-hub/allow-deny.png)
 
-That is the architecture in two `vault kv get` calls. Policy sprawl does not get a vote.
-
-## 7. Footguns I hit
-
-**Exact leaf vs `/*`.** A policy that only ends in `.../{{env}}/*` grants under `.../prod/`. The exact leaf `.../prod` (what `vault kv get` hits) came back **403**. Grant the exact leaf as well, or use a trailing `*` on the leaf segment. That is why the HCL above has both path stanzas.
-
-**Bootstrap order.** Entity + metadata + alias before the first login.
-
-**Root in the UI.** Fine for kind. Never for a shared cluster. The UI itself warns you.
-
-**OSS honesty.** Do not document namespaces or DR replication as if they exist on OSS.
-
-## 8. What I want for real (three-node Raft)
-
-When I leave the policy lab, install flips to HA Raft. Overlay sketch from my IDP docs (`idp-gitops-bridge/docs/adr/vault/values.yaml`):
-
-```yaml
-server:
-  replicas: 3
-  ha:
-    enabled: true
-    raft:
-      enabled: true
-      setNodeId: true
-```
-
-Also: dual disks (data + audit), cloud KMS auto-unseal, LB health only on `/sys/health` **200** (active leader), audit on immediately after init. OSS DR = Raft snapshots + a restore path I have actually rehearsed.
-
-## 9. Teardown
+### 3.5 Teardown
 
 ```bash
 kind delete cluster --name vault-blog
@@ -512,11 +627,35 @@ Output:
 Deleting cluster "vault-blog" ...
 ```
 
-## Where I keep the longer runbook
+## 4. Issues Encountered
 
-| Thing | Path |
-| --- | --- |
-| Spec + Helm overlays | `idp-gitops-bridge/docs/adr/vault/` |
-| Hub addon values | `environments/.../addons/vault/` |
+**Exact leaf vs `/*`.** A policy that only ends in `.../{{env}}/*` grants under `.../prod/`. The exact leaf `.../prod` (what `vault kv get` hits) came back **403**. Capabilities on `.../prod/db_password` were fine. Fix: grant the exact leaf path as well (or trailing `*` on the leaf). That is why the universal policy has both stanzas.
 
-GitOps still owns enablement (`enable_vault` and friends). These notes own the path I walked: decisions → auth UI → schema → kind install with outputs → Vault UI → allow/deny → footguns.
+**Bootstrap order.** If the workload logs in before the Identity Entity has metadata, you get a ghost entity and later “alias already exists” fights with Terraform. Stamp entity + metadata + alias first.
+
+**Root token in the UI.** Works for kind. The UI itself warns that the root token is not stored in the browser. Never use this pattern on a shared cluster.
+
+**Docker socket on WSL.** `kind create` failed until `DOCKER_HOST=unix:///var/run/docker.sock` pointed at the real Docker engine instead of a broken containerd endpoint.
+
+**Port-forward flakiness.** CLI against `127.0.0.1:8200` died when the forward dropped. Running `vault` via `kubectl -n vault exec vault-0 -- ...` was more reliable for the lab script.
+
+**OSS feature honesty.** I kept catching myself writing as if namespaces or warm-standby DR existed. They do not on OSS. Path + policy is the tenancy story until a license changes the rules.
+
+## 5. Pros and Cons
+
+| | Pros | Cons |
+| --- | --- | --- |
+| **Central Vault Hub** | One seal/backup/upgrade story; teams share a broker | Hub is a shared dependency — plan snapshots and restore |
+| **OSS + path tenancy** | No Enterprise license to start; metadata-driven isolation works | No namespaces; no native DR; OSS standbys do not serve reads |
+| **Universal policy** | Kills per-app policy files; onboarding is metadata + alias | Templating bugs (exact leaf) are easy to miss; bootstrap order matters |
+| **Trust-domain auth mounts** | Few mounts (`k8s-prod` / `nonprod` / `platform`) | Role design must bind `iss`/`sub` carefully |
+| **kind + Helm dev mode** | Fast proof of allow/deny and UI | `inmem`, no HA — must not confuse with the Raft values above |
+| **AppRole in the lab** | Easy without cluster OIDC | Weaker story than native K8s JWT for real workloads |
+
+## 6. Conclusions
+
+For my IDP I am staying with a **single Vault Hub on OSS**, multi-tenancy via **identity metadata + one universal policy**, and a **three-node Raft** shape for anything past the lab. Kind + Helm **dev** mode was enough to prove the deny path and to walk the UI. The production values above are what I want next — TLS, dual disks, audit job, snapshot CronJob — once cloud KMS unseal and real storage classes are wired.
+
+Policy sprawl was the research gap that started this. The allow/deny lab is the answer I needed: same mount, different metadata, 403 across apps, without a graveyard of `app-env.hcl` files.
+
+Next for me: trust-domain JWT against a real spoke OIDC issuer, External Secrets / VSO on the universal path, and one Raft snapshot restore I have actually rehearsed.
