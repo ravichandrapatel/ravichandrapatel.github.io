@@ -323,6 +323,75 @@ img {
   line-height: 1.55;
 }
 
+/* Confluence-style expand / collapse for long pastes */
+.prose details.expand {
+  margin: 1.25rem 0 1.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-2) 55%, transparent);
+  overflow: hidden;
+}
+
+.prose details.expand > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.85rem 1.1rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--ink);
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.prose details.expand > summary::-webkit-details-marker {
+  display: none;
+}
+
+.prose details.expand > summary::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.prose details.expand[open] > summary::before {
+  transform: rotate(45deg);
+  margin-top: -0.15rem;
+}
+
+.prose details.expand > summary:hover {
+  background: color-mix(in srgb, var(--bg-2) 90%, #000);
+}
+
+.prose details.expand > summary .expand-hint {
+  margin-left: auto;
+  color: var(--ink-dim);
+  font-size: 0.72rem;
+}
+
+.prose details.expand[open] > summary .expand-hint {
+  visibility: hidden;
+}
+
+.prose details.expand > :not(summary) {
+  margin-left: 1.1rem;
+  margin-right: 1.1rem;
+}
+
+.prose details.expand > pre,
+.prose details.expand > .astro-code {
+  margin-top: 0;
+  margin-bottom: 1.1rem;
+  border-radius: 6px;
+}
+
 .prose :where(pre code) {
   background: none;
   border: 0;

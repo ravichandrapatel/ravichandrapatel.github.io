@@ -112,7 +112,13 @@ Native Kubernetes / JWT is the cleaner machine story. AppRole with a secret_id i
 
 ### Production Helm values I am targeting
 
-This is the three-node Raft / dual-disk / TLS-oriented overlay I want outside the lab (seal blocks stay commented until the cloud KMS ARNs are real):
+This is the three-node Raft / dual-disk / TLS-oriented overlay I want outside the lab (seal blocks stay commented until the cloud KMS ARNs are real). The paste is long — collapsed by default; click to expand (same idea as a Confluence expand macro).
+
+<details class="expand">
+<summary>
+  <span>values.yaml — production-shaped Vault Helm overlay</span>
+  <span class="expand-hint">click to expand</span>
+</summary>
 
 ```yaml
 # VAULT production-shaped configuration
@@ -310,6 +316,8 @@ resources:
 #    cpu: "4000m"
 #    memory: "8Gi"
 ```
+
+</details>
 
 For the kind policy proof I intentionally did **not** use that file. Lab values stay tiny and ephemeral (next section).
 
