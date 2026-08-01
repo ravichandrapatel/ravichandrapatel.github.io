@@ -28,19 +28,18 @@ const COPY: Record<AuthMode, string> = {
     "① Pod reads role_id from a Kubernetes Secret (RBAC). ② Pod logs into Vault with role_id — no SA JWT and no TokenReview. (Lab used role_id only; real AppRole usually also needs secret_id.)",
 };
 
-/** Shared layout — viewBox 400×225. x/y are % of canvas (= px/W, px/H). */
-const VB = { w: 400, h: 225 } as const;
+/** viewBox units — roomy layout so chips, labels, and tags don't collide */
+const VB = { w: 560, h: 320 } as const;
 const pct = (x: number, y: number) => ({
   x: (x / VB.w) * 100,
   y: (y / VB.h) * 100,
 });
 
-/** Icon centers in viewBox units — compact cluster so arrows meet the chips */
 const P = {
-  pod: { x: 155, y: 78 },
-  vault: { x: 245, y: 78 },
-  k8s: { x: 155, y: 158 },
-  secret: { x: 155, y: 158 },
+  pod: { x: 130, y: 88 },
+  vault: { x: 430, y: 88 },
+  k8s: { x: 130, y: 250 },
+  secret: { x: 130, y: 250 },
 } as const;
 
 const NODES: Record<AuthMode, NodeDef[]> = {
@@ -61,7 +60,8 @@ const midTag = (x: number, y: number) => ({
   tagY: (y / VB.h) * 100,
 });
 
-const GAP = 22; // clear icon border so arrow tips meet the chip edge
+/** Clearance from icon center to path endpoint (matches ~chip half-width in viewBox) */
+const GAP = 36;
 
 const EDGES: Record<AuthMode, Edge[]> = {
   k8s: [
@@ -69,13 +69,13 @@ const EDGES: Record<AuthMode, Edge[]> = {
       id: "login",
       d: `M ${P.pod.x + GAP} ${P.pod.y} L ${P.vault.x - GAP} ${P.vault.y}`,
       tag: "② login (JWT)",
-      ...midTag((P.pod.x + P.vault.x) / 2, P.pod.y - 14),
+      ...midTag((P.pod.x + P.vault.x) / 2, P.pod.y - 28),
     },
     {
       id: "review",
-      d: `M ${P.vault.x} ${P.vault.y + GAP} C ${P.vault.x - 10} ${P.vault.y + 55}, ${P.k8s.x + 55} ${P.k8s.y - 6}, ${P.k8s.x + GAP} ${P.k8s.y}`,
+      d: `M ${P.vault.x} ${P.vault.y + GAP} C ${P.vault.x - 20} ${P.vault.y + 90}, ${P.k8s.x + 110} ${P.k8s.y - 10}, ${P.k8s.x + GAP} ${P.k8s.y}`,
       tag: "③ TokenReview",
-      ...midTag(220, 128),
+      ...midTag(310, 190),
     },
   ],
   approle: [
@@ -83,13 +83,13 @@ const EDGES: Record<AuthMode, Edge[]> = {
       id: "rbac",
       d: `M ${P.secret.x} ${P.secret.y - GAP} L ${P.pod.x} ${P.pod.y + GAP}`,
       tag: "① RBAC read",
-      ...midTag(P.pod.x + 38, (P.pod.y + P.secret.y) / 2),
+      ...midTag(P.pod.x + 72, (P.pod.y + P.secret.y) / 2),
     },
     {
       id: "login",
       d: `M ${P.pod.x + GAP} ${P.pod.y} L ${P.vault.x - GAP} ${P.vault.y}`,
       tag: "② login (role_id)",
-      ...midTag((P.pod.x + P.vault.x) / 2, P.pod.y - 14),
+      ...midTag((P.pod.x + P.vault.x) / 2, P.pod.y - 28),
     },
   ],
 };
@@ -144,9 +144,9 @@ function NodeIcon({ id }: { id: NodeId }) {
   if (id === "vault") return <VaultIcon />;
   if (id === "k8s") return <KubernetesIcon />;
   if (id === "secret") {
-    return <KeyRound size={22} color="#ffec6e" strokeWidth={2} aria-hidden />;
+    return <KeyRound size={24} color="#ffec6e" strokeWidth={2} aria-hidden />;
   }
-  return <Box size={22} color="#5b9fd4" strokeWidth={2} aria-hidden />;
+  return <Box size={24} color="#5b9fd4" strokeWidth={2} aria-hidden />;
 }
 
 function FlowEdge({ edge, delay }: { edge: Edge; delay: number }) {
@@ -156,7 +156,7 @@ function FlowEdge({ edge, delay }: { edge: Edge; delay: number }) {
         d={edge.d}
         fill="none"
         stroke="rgba(91, 159, 212, 0.55)"
-        strokeWidth="1.75"
+        strokeWidth="2"
         strokeLinecap="round"
         markerEnd="url(#vf-arrow)"
         initial={{ pathLength: 0, opacity: 0 }}
@@ -164,7 +164,7 @@ function FlowEdge({ edge, delay }: { edge: Edge; delay: number }) {
         transition={{ duration: 0.45, delay }}
       />
       <motion.circle
-        r="3.2"
+        r="3.5"
         fill="#3ecf8e"
         initial={{ offsetDistance: "0%" }}
         animate={{ offsetDistance: "100%" }}
@@ -223,8 +223,8 @@ export default function VaultK8sAuthFlow() {
       <div className={styles.canvas}>
         <svg
           className={styles.svg}
-          viewBox="0 0 400 225"
-          preserveAspectRatio="none"
+          viewBox={`0 0 ${VB.w} ${VB.h}`}
+          preserveAspectRatio="xMidYMid meet"
           aria-hidden
         >
           <defs>
@@ -233,8 +233,8 @@ export default function VaultK8sAuthFlow() {
               viewBox="0 0 10 10"
               refX="8"
               refY="5"
-              markerWidth="6"
-              markerHeight="6"
+              markerWidth="7"
+              markerHeight="7"
               orient="auto"
             >
               <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(91, 159, 212, 0.75)" />
