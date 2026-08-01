@@ -4,76 +4,75 @@ import { Box, KeyRound } from "lucide-react";
 import styles from "./VaultK8sAuthFlow.module.css";
 
 type AuthMode = "k8s" | "approle";
-
 type NodeId = "pod" | "vault" | "k8s" | "secret";
 
 type NodeDef = {
   id: NodeId;
   label: string;
-  x: number; // % of canvas
+  badge?: string;
+  x: number;
   y: number;
 };
 
 type Edge = {
-  d: string; // SVG path in viewBox 0 0 400 225
-  tag?: string;
+  id: string;
+  d: string;
+  tag: string;
   tagX: number;
   tagY: number;
 };
 
 const COPY: Record<AuthMode, string> = {
-  k8s: "Pod sends a short-lived SA JWT to Vault. Vault verifies it via TokenReview on the Kubernetes API.",
+  k8s: "① Pod already has a projected SA JWT. ② Pod logs into Vault with that JWT. ③ Vault asks the Kubernetes API for a TokenReview before issuing a client token.",
   approle:
-    "Pod reads role_id from a Secret (RBAC). Logs into Vault with role_id only — no JWT, no TokenReview.",
+    "① Pod reads role_id from a Kubernetes Secret (RBAC). ② Pod logs into Vault with role_id — no SA JWT and no TokenReview. (Lab used role_id only; real AppRole usually also needs secret_id.)",
 };
 
+/** viewBox 400×225 — node centers: pod (88,56), vault (312,56), k8s/secret (88,176) */
 const NODES: Record<AuthMode, NodeDef[]> = {
   k8s: [
-    { id: "pod", label: "Pod", x: 22, y: 28 },
-    { id: "vault", label: "Vault", x: 78, y: 28 },
+    { id: "pod", label: "Pod", badge: "SA JWT", x: 22, y: 25 },
+    { id: "vault", label: "Vault", x: 78, y: 25 },
     { id: "k8s", label: "K8s API", x: 22, y: 78 },
   ],
   approle: [
-    { id: "pod", label: "Pod", x: 22, y: 36 },
-    { id: "vault", label: "Vault", x: 78, y: 36 },
-    { id: "secret", label: "role_id", x: 22, y: 78 },
+    { id: "pod", label: "Pod", x: 22, y: 25 },
+    { id: "vault", label: "Vault", x: 78, y: 25 },
+    { id: "secret", label: "Secret", badge: "role_id", x: 22, y: 78 },
   ],
 };
 
-/** viewBox 400×225 — node centers approx (88,63), (312,63), (88,176) / (88,176 secret) */
 const EDGES: Record<AuthMode, Edge[]> = {
   k8s: [
     {
-      d: "M 88 155 L 88 85",
-      tag: "JWT",
-      tagX: 14,
-      tagY: 52,
-    },
-    {
-      d: "M 110 63 L 290 63",
-      tag: "login",
+      id: "login",
+      d: "M 110 56 L 288 56",
+      tag: "② login (JWT)",
       tagX: 50,
-      tagY: 22,
+      tagY: 16,
     },
     {
-      d: "M 300 85 C 260 130, 160 165, 110 176",
-      tag: "TokenReview",
-      tagX: 58,
-      tagY: 68,
+      id: "review",
+      d: "M 300 78 C 250 120, 150 155, 110 176",
+      tag: "③ TokenReview",
+      tagX: 56,
+      tagY: 62,
     },
   ],
   approle: [
     {
-      d: "M 88 155 L 88 100",
-      tag: "RBAC read",
-      tagX: 14,
-      tagY: 56,
+      id: "rbac",
+      d: "M 88 155 L 88 78",
+      tag: "① RBAC read",
+      tagX: 36,
+      tagY: 52,
     },
     {
-      d: "M 110 81 L 290 81",
-      tag: "role_id",
+      id: "login",
+      d: "M 110 56 L 288 56",
+      tag: "② login (role_id)",
       tagX: 50,
-      tagY: 28,
+      tagY: 16,
     },
   ],
 };
@@ -142,7 +141,7 @@ function FlowEdge({ edge, delay }: { edge: Edge; delay: number }) {
         stroke="rgba(91, 159, 212, 0.55)"
         strokeWidth="1.75"
         strokeLinecap="round"
-        strokeDasharray="5 7"
+        markerEnd="url(#vf-arrow)"
         initial={{ pathLength: 0, opacity: 0 }}
         animate={{ pathLength: 1, opacity: 1 }}
         transition={{ duration: 0.45, delay }}
@@ -219,7 +218,7 @@ export default function VaultK8sAuthFlow() {
               refY="5"
               markerWidth="6"
               markerHeight="6"
-              orient="auto-start-reverse"
+              orient="auto"
             >
               <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(91, 159, 212, 0.75)" />
             </marker>
@@ -233,20 +232,7 @@ export default function VaultK8sAuthFlow() {
               transition={{ duration: 0.2 }}
             >
               {edges.map((edge, i) => (
-                <g key={`${mode}-${edge.d}`}>
-                  <motion.path
-                    d={edge.d}
-                    fill="none"
-                    stroke="rgba(91, 159, 212, 0.28)"
-                    strokeWidth="1.75"
-                    strokeLinecap="round"
-                    markerEnd="url(#vf-arrow)"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ duration: 0.3, delay: i * 0.08 }}
-                  />
-                  <FlowEdge edge={edge} delay={i * 0.1} />
-                </g>
+                <FlowEdge key={edge.id} edge={edge} delay={i * 0.12} />
               ))}
             </motion.g>
           </AnimatePresence>
@@ -270,19 +256,18 @@ export default function VaultK8sAuthFlow() {
                   <NodeIcon id={n.id} />
                 </div>
                 <figcaption className={styles.label}>{n.label}</figcaption>
+                {n.badge ? <span className={styles.badge}>{n.badge}</span> : null}
               </figure>
             ))}
-            {edges.map((edge) =>
-              edge.tag ? (
-                <span
-                  key={edge.tag + edge.tagX}
-                  className={styles.edgeTag}
-                  style={{ left: `${edge.tagX}%`, top: `${edge.tagY}%` }}
-                >
-                  {edge.tag}
-                </span>
-              ) : null,
-            )}
+            {edges.map((edge) => (
+              <span
+                key={edge.id}
+                className={styles.edgeTag}
+                style={{ left: `${edge.tagX}%`, top: `${edge.tagY}%` }}
+              >
+                {edge.tag}
+              </span>
+            ))}
           </motion.div>
         </AnimatePresence>
       </div>

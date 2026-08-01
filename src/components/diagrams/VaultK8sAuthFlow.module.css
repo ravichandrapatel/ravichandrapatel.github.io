@@ -133,6 +133,18 @@
   max-width: 5.2rem;
 }
 
+.badge {
+  font-family: var(--font-mono);
+  font-size: 0.52rem;
+  letter-spacing: 0.02em;
+  color: var(--vf-accent);
+  border: 1px solid color-mix(in srgb, var(--vf-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--bg-0) 88%, transparent);
+  border-radius: 3px;
+  padding: 0.05rem 0.28rem;
+  white-space: nowrap;
+}
+
 .edgeTag {
   position: absolute;
   z-index: 3;

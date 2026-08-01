@@ -104,7 +104,7 @@ Create the entity **with metadata before** the first login.
 
 I am not creating one auth mount per cluster. I group by trust domain: `k8s-prod`, `k8s-nonprod`, `k8s-platform`. Roles bind `iss` (cluster issuer) and `sub` (namespace:SA).
 
-Toggle these. Watch the trust boundary move.
+Toggle Native K8s vs AppRole — the arrows are the trust boundary.
 
 <VaultK8sAuthFlow client:load />
 
