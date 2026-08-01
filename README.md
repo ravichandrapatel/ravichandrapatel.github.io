@@ -20,7 +20,7 @@ npm run dev
 
 ## Write a post
 
-Add Markdown under `src/content/posts/`:
+Add Markdown or MDX under `src/content/posts/`. Voice: human, specific, no fluff.
 
 ```md
 ---
@@ -32,6 +32,10 @@ tags: [aws, devops]
 
 Body in Markdown…
 ```
+
+### Architecture / explain-flow diagrams
+
+For auth flows, trust-boundary toggles, or multi-mode architecture explainers, **do not** ship Mermaid/PNG alone. Add an interactive React island under `src/components/diagrams/` (Tailwind + Framer Motion, official product SVGs) and mount it from MDX with `client:load`. See the Vault Hub post for the pattern (`VaultK8sAuthFlow`).
 
 Then open a PR or push to `main` — Pages deploys automatically.
 
