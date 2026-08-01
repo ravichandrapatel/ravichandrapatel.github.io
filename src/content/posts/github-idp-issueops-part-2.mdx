@@ -125,13 +125,13 @@ On `infra-<env>`, PR CI calls the pinned composite/reusable pipeline from `gh-pl
 validate → Checkov → plan (+ Conftest/OPA) → (merge) → Environment approval → apply
 ```
 
-Then the workload fires `repository_dispatch` back to control. `status-sync` updates issue labels (`status:plan-ok`, `status:applied`, …).
+Control has a `status-sync` workflow that listens for `repository_dispatch` type `issueops_status` and flips labels (`status:plan-ok`, `status:applied`, …). The **contract is real**; the example `infra-dev` `tofu.yml` does **not** auto-fire that callback yet. Today labels often sit at `status:pr-open` until you wire the dispatch (or post it manually). Don’t read `status:applied` into the demo unless you’ve hooked that up.
 
 I am **not** pasting a full module or teaching HCL here. The product catalog points at `s3/v1.0.0`. Platform engineers own that tag. IssueOps consumers fill a form.
 
 ## 6. What I tested
 
-`infra-dev` / `infra-prod` are private, so I am not pasting workload PR screenshots here. Public evidence is the control issue comments (PR URLs), Actions runs, and labels. Click through from an accepted issue if you have access to the workload.
+`infra-dev` is private, so I am not pasting workload PR screenshots here. Public evidence is the control issue comments (PR URLs), Actions runs, and labels. Click through from an accepted issue if you have access to the workload. The control registry also names `infra-prod`; this series’s live demos are on **dev**.
 
 Concrete runs on the public control repo:
 
@@ -167,6 +167,8 @@ Local / CI checks on control itself: `validate-control.sh`, pin validation, Pyth
 **Confusing control with apply.** Control never OIDC’s to AWS. If you “fix prod” from control, you designed it wrong.
 
 **Natural key vs issue number.** Paths without issue suffix mean uniqueness is global per env — duplicates are a feature, not a bug.
+
+**Assuming `status:applied` appears by magic.** `status-sync` exists on control; the starter workload `tofu.yml` does not post the callback yet. Wire it or dispatch manually.
 
 ## 8. FAQ
 

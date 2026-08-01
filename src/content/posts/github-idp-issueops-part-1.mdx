@@ -164,8 +164,8 @@ Toggle **Public gate** on the diagram above for the fail-closed picture.
 | `status:pending-validation` | Waiting on control |
 | `status:pr-open` | Workload PR exists |
 | `status:validation-failed` | Catalog / duplicate / schema rejected |
-| `status:plan-ok` / `plan-failed` | From workload `status-sync` |
-| `status:applied` / `apply-failed` | From workload `status-sync` |
+| `status:plan-ok` / `plan-failed` | From `status-sync` (when workload callback is wired) |
+| `status:applied` / `apply-failed` | From `status-sync` (when workload callback is wired) |
 
 Real issue that made it to a PR — [issue #15](https://github.com/ravichandrapatel/gh-platform-control/issues/15):
 
