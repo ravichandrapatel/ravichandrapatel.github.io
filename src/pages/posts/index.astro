@@ -9,18 +9,18 @@ const posts = (await getCollection("posts", ({ data }) => !data.draft)).sort(
 ---
 
 <BaseLayout
-  title="Posts"
-  description="All posts on cloud-dispatch."
+  title="Notes"
+  description="Field notes on cloud-dispatch."
   path="/posts/"
 >
   <article class="prose">
-    <h1>Posts</h1>
-    <p class="meta">Dispatches · newest first</p>
+    <h1>Notes</h1>
+    <p class="meta">Field notes · newest first</p>
 
     {
       posts.length === 0 ? (
         <div class="empty-state">
-          No posts yet. Add a Markdown file under <code>src/content/posts/</code> with
+          No notes yet. Add Markdown/MDX under <code>src/content/posts/</code> with
           title, description, pubDate, and optional tags.
         </div>
       ) : (

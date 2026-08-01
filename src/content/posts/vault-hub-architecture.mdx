@@ -1,8 +1,9 @@
 ---
-title: "One Vault Hub. Many clusters. Zero policy sprawl."
-description: "How ADR-0002 shapes a centralized Vault Hub for multi-tenant Kubernetes — identity metadata, one universal policy, and what I actually proved on kind."
+title: "Vault Hub notes — one broker, metadata tenancy"
+description: "Field notes on a central Vault for multi-tenant Kubernetes: identity metadata, one universal policy, trust-domain auth, and a kind lab that caught an ACL footgun."
 pubDate: 2026-08-01
-tags: [vault, kubernetes, idp, gitops, secrets]
+updatedDate: 2026-08-01
+tags: [vault, kubernetes, secrets, notes]
 draft: false
 ---
 
@@ -10,41 +11,31 @@ import VaultK8sAuthFlow from "../../components/diagrams/VaultK8sAuthFlow.tsx";
 
 I don’t want a Vault per team.
 
-I want one broker. Hub cluster. Spokes talk to it. Secrets land on paths that identity already decided. That’s the short version of [ADR-0002](https://github.com/ravichandrapatel/idp-gitops-bridge/blob/main/docs/adr/0002-vault-hub.md) in `idp-gitops-bridge` — and the long version lives next to it under `docs/adr/vault/`.
+One broker on the hub. Spokes authenticate in. Secrets sit on paths that identity already decided. That’s the shape I’ve been running toward in `idp-gitops-bridge` — runbooks and Helm overlays live under `docs/adr/vault/` if you need the full write-up later. These are the notes I wish I’d had on day one.
 
-This post is the architecture, the opinions, and a kind lab that actually said “permission denied” until I fixed a dumb ACL detail.
-
-## Why a hub at all
+## Why a hub
 
 Per-tenant Vault looks tidy on a whiteboard. In production it’s seal keys, Raft disks, audit devices, backup jobs, upgrade weekends — multiplied by every OU that thinks it’s special.
 
-So the decision is blunt:
+So:
 
-1. Run a **Vault Hub** (OSS unless you buy Enterprise).
-2. Multi-tenancy in OSS = **path convention + policies**. Namespaces and native DR replication stay labeled Enterprise-only in the spec. No pretending.
-3. Keep the narrative and Helm overlays under `docs/adr/vault/` with the ADR. One place operators look.
+1. One **Vault Hub** (OSS unless you buy Enterprise).
+2. Multi-tenancy in OSS = **path convention + policies**. Namespaces and native DR replication are Enterprise — label them, don’t pretend.
+3. Hub–spoke GitOps already splits “hub bootstraps, spoke owns day-2.” Vault fits the same mental model: central security broker, not a pet per cluster.
 
-Hub–spoke Argo (ADR-0001) already splits “hub bootstraps, spoke owns day-2.” Vault sits on that same mental model: central security broker, not a pet per cluster.
+![Hub topology — clusters auth in; IdP for humans; short-lived creds out](/posts/vault-hub/architecture.png)
 
-![Vault Hub architecture — clusters auth to one Vault; IdP for humans; short-lived creds out](/posts/vault-hub/architecture.png)
+## Principles that actually stuck
 
-## Three principles I actually care about
+**Identity-first.** After login you’re an Identity Entity with metadata. Not a floating token with a handwritten policy name.
 
-The spec opens with a table. I’ll translate.
+**Policy minimalism.** One universal template. Not two hundred `payment-api-prod.hcl` files rotting in git.
 
-**Identity-first.** After login, you’re an Identity Entity with metadata. Not a floating token with a handwritten policy name.
+**No static cloud/cluster master keys in the workloads.** Auto-unseal via cloud KMS. Machines via JWT / Kubernetes auth or a carefully bounded AppRole. Humans via OIDC (Azure AD, Okta — pick your IdP).
 
-**Policy minimalism.** One “universal” policy template. Not two hundred `payment-api-prod.hcl` files rotting in git.
+## Path shape
 
-**Zero-static credentials for clouds/clusters.** Auto-unseal via cloud KMS. Machine auth via JWT / Kubernetes auth or carefully bounded AppRole. Humans via OIDC (Azure AD, Okta — pick your IdP).
-
-If a design violates those three, it’s usually wrong for this IDP.
-
-## The path shape
-
-Metadata keys on the entity:
-
-| Key | Example |
+| Metadata | Example |
 | --- | --- |
 | `ou` | `test1` |
 | `bu` | `finance` |
@@ -52,19 +43,15 @@ Metadata keys on the entity:
 | `env` | `prod` |
 | `cluster` | `eks-cluster-101` (set at onboarding, not by the pod) |
 
-Secret layout:
-
 ```text
 {{ou}}-ou/data/{{bu}}/{{app_name}}/{{env}}/*
 ```
 
-So finance’s payment API in prod reads `test1-ou/data/finance/payment-api/prod/...`. Retail OMS is a different leaf. Same mount. Different metadata. Deny by construction.
+Finance payment-api prod → `test1-ou/data/finance/payment-api/prod/...`. Retail OMS is another leaf. Same mount. Different metadata. Deny by construction.
 
-KV v2 on every `*-ou` mount. Versioning and metadata API aren’t optional niceties.
+KV v2 on every `*-ou` mount.
 
-## The universal policy
-
-This is the whole joke — one policy, interpolated from identity:
+## Universal policy
 
 ```hcl
 path "{{identity.entity.metadata.ou}}-ou/data/{{identity.entity.metadata.bu}}/{{identity.entity.metadata.app_name}}/{{identity.entity.metadata.env}}" {
@@ -84,78 +71,56 @@ path "identity/entity/id/{{identity.entity.id}}" {
 }
 ```
 
-Notice the exact leaf **and** the `/*` child. I’ll come back to why that matters.
+Exact leaf **and** `/*`. That matters — see the footgun below.
 
-Hub operators get a separate break-glass policy: auth mounts, entity *aliases*, KV *metadata* — not tenant secret data. If SREs can rewrite `identity/entity/*` metadata, they can impersonate any app. Don’t do that.
+Hub operators: auth mounts, entity *aliases*, KV *metadata*. Not tenant secret data. If SREs can rewrite `identity/entity/*` metadata, they can impersonate any app.
 
-## Auth without mount chaos
+## Machine auth — two doors
 
-Don’t create `auth/k8s-<every-cluster-uuid>`. Group by **trust domain**:
+Don’t create `auth/k8s-<every-cluster-uuid>`. Group by trust domain: `k8s-prod`, `k8s-nonprod`, `k8s-platform`. Bind `iss` + `sub` on the role. Same app on EKS and AKS = two roles under `k8s-prod`, different issuers.
 
-- `auth/k8s-prod`
-- `auth/k8s-nonprod`
-- `auth/k8s-platform`
-
-Bind `iss` (cluster OIDC issuer) and `sub` (namespace:SA) on the role. Same app on EKS and AKS = two roles under `k8s-prod`, different issuers. Cluster claim still lands in metadata for audit.
-
-Toggle the two machine paths. Watch what disappears.
+Toggle these. Watch the trust boundary move.
 
 <VaultK8sAuthFlow client:load />
 
-Native Kubernetes / JWT auth is the cleaner machine story. AppRole with `bind_secret_id=false` is in the spec as an option; some reviews call that single-factor. For the kind lab I used AppRole + secret_id because wiring a fake OIDC issuer into kind wasn’t worth the ceremony for a blog screenshot.
+Native K8s / JWT is the cleaner machine story. AppRole with no SecretID shows up in the runbook as an option; some reviews call it single-factor. On kind I used AppRole + secret_id — faking a cluster OIDC issuer wasn’t worth it for a local proof.
 
-## HA, audit, DR — the boring parts that save you
+## HA / audit / DR (boring, required)
 
-Production shape in the ADR values: Raft ×3 (prefer ×5 for serious), dual disks (data + audit), cloud KMS auto-unseal, LB health only on `/sys/health` **200** (active leader). OSS standbys forward; they don’t serve reads. Performance standby is Enterprise. Plan for that.
+Raft ×3 (×5 if you care). Dual disks: data + audit. Cloud KMS auto-unseal. LB only routes `/sys/health` **200** (active leader). OSS standbys forward; they don’t serve reads.
 
-Audit: enable immediately after init. Two devices of different types. Vault will stop taking requests if it can’t write audit. That’s a feature until your disk fills.
+Audit on immediately after init. Two devices, different types. Vault stops taking traffic if it can’t write audit.
 
-DR in OSS: Raft snapshots out to object storage, restore with Terraform/automation. Warm standby DR replication = Enterprise. Label it. Don’t hand-wave.
+OSS DR = Raft snapshots to object storage + restore automation. Warm standby replication is Enterprise.
 
-## Kind lab: prove the deny
+## Kind lab — prove the deny
 
-I stood up `kind` cluster `vault-blog`, Helm chart `hashicorp/vault` in **dev mode** (inmem, single pod, root token). Not production. Not Raft. Fine for proving identity → policy → path.
+`kind` cluster `vault-blog`, Helm `hashicorp/vault` in **dev** mode (inmem, one pod). Not prod. Fine for identity → policy → path.
 
-![kind: vault-0 Running, NodePort services, vault status unsealed](/posts/vault-hub/kind-vault-pods.png)
+![kind: vault-0 up](/posts/vault-hub/kind-vault-pods.png)
 
-Entity metadata stamped:
+![entity metadata + policy](/posts/vault-hub/identity-and-policy.png)
 
-![identity entity metadata ou/bu/app_name/env and universal policy](/posts/vault-hub/identity-and-policy.png)
+- `vault kv get test1-ou/finance/payment-api/prod` → secret
+- `vault kv get test1-ou/retail/oms/prod` → **403**
 
-Then login as the payment-api AppRole:
+![allow own path, deny cross-app](/posts/vault-hub/allow-deny.png)
 
-- `vault kv get test1-ou/finance/payment-api/prod` → `db_password` comes back
-- `vault kv get test1-ou/retail/oms/prod` → **403 permission denied**
+### ACL footgun
 
-![ALLOW on own path, DENY on retail/oms](/posts/vault-hub/allow-deny.png)
+Policy with only `.../{{env}}/*` grants `.../prod/*`. Exact leaf `.../prod` (what `vault kv get` hits) was **deny**. Capabilities on `.../prod/db_password` were fine.
 
-That’s the architecture in two commands.
+Grant the exact leaf, or use a trailing `*` on the leaf segment. I learned that on this lab.
 
-### The ACL footgun I hit
-
-First policy only had `.../{{env}}/*`.
-
-Resultant ACL showed a glob under `.../prod/`. Exact path `.../prod` (what `vault kv get` hits for the leaf) was **deny**. Capabilities on `.../prod/db_password` were fine. Wild.
-
-So either grant the exact leaf path, or use a trailing `*` on the leaf segment. The ADR sample in the vault readme still shows the classic `/*` form — treat the exact-leaf grant as a required patch when you copy it. I learned that the hard way on this lab, not from a whitepaper.
-
-Also: create the Identity Entity **with metadata before** the first login. Empty entity + later Terraform “alias already exists” is a miserable afternoon. Spec §4 says this. Believe it.
+Also: stamp Identity Entity metadata **before** first login. Empty entity + later “alias already exists” is a miserable afternoon.
 
 ## Where the bits live
 
 | Thing | Path |
 | --- | --- |
-| ADR | `idp-gitops-bridge/docs/adr/0002-vault-hub.md` |
-| Full spec + SOPs | `idp-gitops-bridge/docs/adr/vault/readme.md` |
-| Prod-ish Helm overlay | `idp-gitops-bridge/docs/adr/vault/values.yaml` |
+| Runbook / overlays | `idp-gitops-bridge/docs/adr/vault/` |
 | Hub addon values | `environments/.../addons/vault/` |
 
-GitOps still owns *enablement* (`enable_vault` labels, AppSets). The ADR owns *shape*.
-
-## What I’d ship next
-
-Trust-domain JWT mounts against a real spoke OIDC issuer. ESO / VSO pulling from the universal path. Snapshot job to S3 that you’ve actually restored once. And a Conftest rule that fails PRs still inventing per-app Vault policies.
+GitOps owns enablement (`enable_vault` labels). The notes above own the shape I care about day to day.
 
 One hub. Metadata as tenancy. Policies that don’t multiply.
-
-That’s the architecture.

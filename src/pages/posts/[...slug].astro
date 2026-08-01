@@ -23,7 +23,7 @@ const { Content } = await render(post);
     <h1>{post.data.title}</h1>
     <p class="meta">
       {post.data.pubDate.toISOString().slice(0, 10)}
-      {" · "}
+      {" · field note · "}
       Ravichandra
       {post.data.tags.length > 0 ? ` · ${post.data.tags.join(", ")}` : ""}
     </p>
