@@ -1,0 +1,221 @@
+.wrap {
+  --vf-ink: var(--ink);
+  --vf-dim: var(--ink-dim);
+  --vf-line: var(--line);
+  --vf-accent: var(--accent);
+  --vf-blue: var(--accent-2);
+
+  position: relative;
+  width: 100%;
+  max-width: none;
+  margin: 1.75rem 0 2rem;
+  border: 1px solid var(--vf-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-1) 90%, #000);
+  font-family: var(--font-body);
+  color: var(--vf-ink);
+  overflow: hidden;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+  padding: 0.85rem 1.1rem;
+  border-bottom: 1px solid var(--vf-line);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--vf-dim);
+}
+
+.toggle {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--vf-line);
+  border-radius: 999px;
+  gap: 1px;
+  background: color-mix(in srgb, var(--bg-0) 65%, transparent);
+}
+
+.toggleBtn {
+  position: relative;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--vf-dim);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 0.38rem 0.75rem;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toggleBtn:hover {
+  color: var(--vf-ink);
+}
+
+.toggleBtn[aria-checked="true"] {
+  color: #061018;
+}
+
+.pill {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--vf-accent);
+  z-index: 0;
+}
+
+.toggleLabel {
+  position: relative;
+  z-index: 1;
+}
+
+/* Locked to SVG viewBox — taller canvas so nodes/tags breathe */
+.canvas {
+  position: relative;
+  width: min(100%, 44rem);
+  aspect-ratio: 560 / 320;
+  min-height: 16rem;
+  margin: 0.75rem auto 0.5rem;
+  padding: 0.25rem 0;
+  background-image: radial-gradient(rgba(232, 238, 246, 0.06) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Anchor = icon center; caption hangs below with room before the next node */
+.node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 5.5rem;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.icon {
+  display: grid;
+  place-items: center;
+  width: 2.65rem;
+  height: 2.65rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-0) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vf-line) 80%, transparent);
+  flex-shrink: 0;
+}
+
+.icon svg {
+  width: 1.65rem;
+  height: 1.65rem;
+  display: block;
+}
+
+.label {
+  position: absolute;
+  top: calc(50% + 1.55rem);
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--vf-ink);
+  white-space: nowrap;
+}
+
+.badge {
+  position: absolute;
+  top: calc(50% + 2.7rem);
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.02em;
+  color: var(--vf-accent);
+  border: 1px solid color-mix(in srgb, var(--vf-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--bg-0) 88%, transparent);
+  border-radius: 3px;
+  padding: 0.08rem 0.35rem;
+  white-space: nowrap;
+}
+
+.edgeTag {
+  position: absolute;
+  z-index: 3;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.03em;
+  color: var(--vf-accent);
+  background: color-mix(in srgb, var(--bg-0) 92%, transparent);
+  padding: 0.14rem 0.45rem;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--vf-accent) 35%, transparent);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.foot {
+  border-top: 1px solid var(--vf-line);
+  padding: 0.8rem 1.1rem 0.95rem;
+}
+
+.footText {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--vf-dim);
+}
+
+@media (max-width: 40rem) {
+  .canvas {
+    width: 100%;
+    min-height: 14rem;
+  }
+
+  .node {
+    width: 4.75rem;
+  }
+
+  .icon {
+    width: 2.35rem;
+    height: 2.35rem;
+  }
+
+  .label {
+    font-size: 0.62rem;
+  }
+
+  .edgeTag {
+    font-size: 0.58rem;
+    padding: 0.1rem 0.32rem;
+  }
+}
