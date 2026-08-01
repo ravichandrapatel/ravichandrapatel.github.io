@@ -1,6 +1,6 @@
 ---
-title: "Building a Vault Hub for my IDP on OSS"
-description: "Standing up a central HashiCorp Vault on OSS for a multi-tenant IDP — issue, architecture, kind validation with outputs and UI, footguns, pros and cons."
+title: "Building a Vault Hub for my internal developer portal on OSS"
+description: "Standing up a central HashiCorp Vault on OSS for a multi-tenant internal developer portal — issue, architecture, kind validation with outputs and UI, footguns, pros and cons."
 pubDate: 2026-08-01
 updatedDate: 2026-08-01
 tags: [vault, kubernetes, secrets, notes]
@@ -11,11 +11,11 @@ import VaultK8sAuthFlow from "../../components/diagrams/VaultK8sAuthFlow.tsx";
 
 ## 1. Intro and Issue
 
-I am currently working on building my own IDP. While debating the architecture I hit a familiar question: where do secrets live?
+I am currently working on building my own internal developer portal. While debating the architecture I hit a familiar question: where do secrets live?
 
-What I am creating here is not “another Vault tutorial.” I am building a **central Vault Hub** that my IDP control plane and application teams will share — one broker, many tenants — on **Vault OSS**, with isolation that does not depend on Enterprise namespaces. The Hub should answer: can `payment-api` in finance read its own secrets, and can it be hard-denied from touching someone else’s path, without me writing a new policy file for every app?
+What I am creating here is not “another Vault tutorial.” I am building a **central Vault Hub** that my internal developer portal control plane and application teams will share — one broker, many tenants — on **Vault OSS**, with isolation that does not depend on Enterprise namespaces. The Hub should answer: can `payment-api` in finance read its own secrets, and can it be hard-denied from touching someone else’s path, without me writing a new policy file for every app?
 
-I went through a lot of documentation and blogs and eventually narrowed it to Vault. I have been using Vault Enterprise across multiple projects for the past five years, so I want to pull those same principles into this IDP setup. Naturally I do not have the budget for an Enterprise license right now, so I am on Vault OSS. I know what is missing compared to Enterprise — namespaces, native DR replication, performance standbys that actually serve reads. Some of that I can approximate. Some of it I cannot. That is fine. I still want the operational shape I am used to.
+I went through a lot of documentation and blogs and eventually narrowed it to Vault. I have been using Vault Enterprise across multiple projects for the past five years, so I want to pull those same principles into this internal developer portal setup. Naturally I do not have the budget for an Enterprise license right now, so I am on Vault OSS. I know what is missing compared to Enterprise — namespaces, native DR replication, performance standbys that actually serve reads. Some of that I can approximate. Some of it I cannot. That is fine. I still want the operational shape I am used to.
 
 Went back to the drawing board. During research one gap stood out: almost nobody writes clearly about **how to kill policy sprawl** when you are stuck on OSS and still need multi-tenant isolation.
 
@@ -41,13 +41,13 @@ These notes walk the problem end to end: what I decided, how I validated it on k
 
 ### Central hub, not a Vault per team
 
-When building an IDP I do not want a separate Vault instance per team. I need a **central Vault** that runs where the IDP control plane lives. Application teams, other clusters, and VMs authenticate into that same broker.
+When building an internal developer portal I do not want a separate Vault instance per team. I need a **central Vault** that runs where the portal control plane lives. Application teams, other clusters, and VMs authenticate into that same broker.
 
 I am selecting a **three-node** Vault for real environments. Raft leader election wants an **odd** quorum (same idea as etcd). Three is the minimum I will call HA. Five later if the platform gets serious.
 
 On OSS, multi-tenant isolation is **path convention + policies**. Namespaces and native DR stay Enterprise — I label that honestly.
 
-![Hub topology — clusters auth in; IdP for humans; short-lived creds out](/posts/vault-hub/architecture.png)
+![Hub topology — clusters auth in; identity provider for humans; short-lived creds out](/posts/vault-hub/architecture.png)
 
 ### Principles
 
@@ -687,9 +687,9 @@ Deleting cluster "vault-blog" ...
 
 ## 6. Conclusions
 
-What I set out to create is a **Vault Hub for my IDP**: one OSS broker, tenants isolated by metadata, one universal policy. The **finance / payment-api vs retail / oms** scenario is how I will keep testing that — same analogy when I move from kind to Raft, and when I swap AppRole for real Kubernetes JWT auth.
+What I set out to create is a **Vault Hub for my internal developer portal**: one OSS broker, tenants isolated by metadata, one universal policy. The **finance / payment-api vs retail / oms** scenario is how I will keep testing that — same analogy when I move from kind to Raft, and when I swap AppRole for real Kubernetes JWT auth.
 
-For my IDP I am staying with that Hub model and a **three-node Raft** shape for anything past the lab. Kind + Helm **dev** mode was enough to prove allow on payment-api and 403 on retail, and to walk the UI. The production values above are what I want next — TLS, dual disks, audit job, snapshot CronJob — once cloud KMS unseal and real storage classes are wired.
+For my internal developer portal I am staying with that Hub model and a **three-node Raft** shape for anything past the lab. Kind + Helm **dev** mode was enough to prove allow on payment-api and 403 on retail, and to walk the UI. The production values above are what I want next — TLS, dual disks, audit job, snapshot CronJob — once cloud KMS unseal and real storage classes are wired.
 
 Policy sprawl was the research gap that started this. The lab answered it without a graveyard of `app-env.hcl` files.
 
