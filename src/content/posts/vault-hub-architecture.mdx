@@ -13,11 +13,29 @@ import VaultK8sAuthFlow from "../../components/diagrams/VaultK8sAuthFlow.tsx";
 
 I am currently working on building my own IDP. While debating the architecture I hit a familiar question: where do secrets live?
 
+What I am creating here is not “another Vault tutorial.” I am building a **central Vault Hub** that my IDP control plane and application teams will share — one broker, many tenants — on **Vault OSS**, with isolation that does not depend on Enterprise namespaces. The Hub should answer: can `payment-api` in finance read its own secrets, and can it be hard-denied from touching someone else’s path, without me writing a new policy file for every app?
+
 I went through a lot of documentation and blogs and eventually narrowed it to Vault. I have been using Vault Enterprise across multiple projects for the past five years, so I want to pull those same principles into this IDP setup. Naturally I do not have the budget for an Enterprise license right now, so I am on Vault OSS. I know what is missing compared to Enterprise — namespaces, native DR replication, performance standbys that actually serve reads. Some of that I can approximate. Some of it I cannot. That is fine. I still want the operational shape I am used to.
 
 Went back to the drawing board. During research one gap stood out: almost nobody writes clearly about **how to kill policy sprawl** when you are stuck on OSS and still need multi-tenant isolation.
 
-These notes walk that problem end to end: what I decided, how I validated it on kind (commands, outputs, and the Vault UI), what broke, and what I would trade off again.
+### The scenario I will use for testing (and keep reusing)
+
+I am thinking of a small but realistic multi-tenant picture for the rest of these notes — and I will use the **same analogy going forward** in the lab, the UI checks, and later when I wire real clusters:
+
+| Piece | What I pretend it is |
+| --- | --- |
+| Org / OU | `test1` — one customer / org on the Hub |
+| Business unit A | `finance` |
+| App A (the one I onboard) | `payment-api` in `prod` |
+| Business unit B (the neighbor) | `retail` |
+| App B (must stay blocked) | `oms` in `prod` |
+
+So: **finance / payment-api** is my happy path. **retail / oms** is the “should get 403” path. Same Vault, same KV mount family (`test1-ou/`), different identity metadata. If payment-api can read retail’s secrets, the design failed.
+
+I am not inventing a second story later for AppRole, UI, or footguns — every command below is proving that one scenario.
+
+These notes walk the problem end to end: what I decided, how I validated it on kind (commands, outputs, and the Vault UI), what broke, and what I would trade off again.
 
 ## 2. Architecture and Decision
 
@@ -39,9 +57,11 @@ On OSS, multi-tenant isolation is **path convention + policies**. Namespaces and
 
 ### Metadata and path schema
 
+Using the same test scenario from the intro — this is the identity stamp I put on the `payment-api` entity:
+
 | Metadata | Example | Notes |
 | --- | --- | --- |
-| `ou` | `test1` | top-level mount prefix |
+| `ou` | `test1` | top-level mount prefix (the org in my analogy) |
 | `bu` | `finance` | business unit folder |
 | `app_name` | `payment-api` | application id |
 | `env` | `prod` | lifecycle |
@@ -51,7 +71,10 @@ On OSS, multi-tenant isolation is **path convention + policies**. Namespaces and
 {{ou}}-ou/data/{{bu}}/{{app_name}}/{{env}}/*
 ```
 
-Example: `test1-ou/data/finance/payment-api/prod/...`
+For my scenario that resolves to:
+
+- Allowed: `test1-ou/data/finance/payment-api/prod/...`
+- Denied for that same identity: `test1-ou/data/retail/oms/prod/...`
 
 ### Universal policy
 
@@ -292,7 +315,7 @@ For the kind policy proof I intentionally did **not** use that file. Lab values 
 
 ## 3. Execution and Validation
 
-Dev mode is **not** three-node Raft. It is how I prove identity → policy → path isolation quickly before I burn time on quorum.
+Still the same scenario: stand up a disposable Vault, put a secret under **finance / payment-api / prod**, stamp an identity as that app, prove read works, then prove **retail / oms** returns 403. Dev mode is **not** three-node Raft. It is how I prove that analogy quickly before I burn time on quorum.
 
 ### 3.1 kind cluster
 
@@ -436,6 +459,8 @@ Browser: [http://127.0.0.1:8200/ui/](http://127.0.0.1:8200/ui/)
 ![Vault UI dashboard after root token login](/posts/vault-hub/vault-ui-dashboard.png)
 
 ### 3.4 KV, policy, entity, AppRole proof
+
+Here I materialize the analogy: mount `test1-ou/`, write the finance secret (and a shared finance secret), then later try retail which I never even need to create — deny is enough.
 
 ```bash
 kubectl -n vault exec -it vault-0 -- sh
@@ -654,8 +679,10 @@ Deleting cluster "vault-blog" ...
 
 ## 6. Conclusions
 
-For my IDP I am staying with a **single Vault Hub on OSS**, multi-tenancy via **identity metadata + one universal policy**, and a **three-node Raft** shape for anything past the lab. Kind + Helm **dev** mode was enough to prove the deny path and to walk the UI. The production values above are what I want next — TLS, dual disks, audit job, snapshot CronJob — once cloud KMS unseal and real storage classes are wired.
+What I set out to create is a **Vault Hub for my IDP**: one OSS broker, tenants isolated by metadata, one universal policy. The **finance / payment-api vs retail / oms** scenario is how I will keep testing that — same analogy when I move from kind to Raft, and when I swap AppRole for real Kubernetes JWT auth.
 
-Policy sprawl was the research gap that started this. The allow/deny lab is the answer I needed: same mount, different metadata, 403 across apps, without a graveyard of `app-env.hcl` files.
+For my IDP I am staying with that Hub model and a **three-node Raft** shape for anything past the lab. Kind + Helm **dev** mode was enough to prove allow on payment-api and 403 on retail, and to walk the UI. The production values above are what I want next — TLS, dual disks, audit job, snapshot CronJob — once cloud KMS unseal and real storage classes are wired.
 
-Next for me: trust-domain JWT against a real spoke OIDC issuer, External Secrets / VSO on the universal path, and one Raft snapshot restore I have actually rehearsed.
+Policy sprawl was the research gap that started this. The lab answered it without a graveyard of `app-env.hcl` files.
+
+Next for me: trust-domain JWT against a real spoke OIDC issuer (still as payment-api), External Secrets / VSO on the universal path, and one Raft snapshot restore I have actually rehearsed.
