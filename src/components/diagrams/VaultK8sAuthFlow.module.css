@@ -80,11 +80,12 @@
   z-index: 1;
 }
 
+/* Keep canvas aspect locked to the SVG viewBox so % nodes and paths share one grid */
 .canvas {
   position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  max-height: 280px;
+  width: min(100%, 36rem);
+  aspect-ratio: 400 / 225;
+  margin: 0.35rem auto 0.15rem;
   background-image: radial-gradient(rgba(232, 238, 246, 0.06) 1px, transparent 1px);
   background-size: 14px 14px;
 }
@@ -95,45 +96,64 @@
   width: 100%;
   height: 100%;
   pointer-events: none;
+  overflow: visible;
 }
 
+.layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Anchor point = icon center; label/badge hang below without shifting the arrow target */
 .node {
   position: absolute;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.28rem;
-  width: 4.5rem;
+  width: 4.75rem;
   margin: 0;
   transform: translate(-50%, -50%);
   z-index: 2;
+  pointer-events: none;
 }
 
 .icon {
   display: grid;
   place-items: center;
-  width: 2rem;
-  height: 2rem;
+  width: 2.15rem;
+  height: 2.15rem;
   border-radius: 6px;
-  background: transparent;
+  background: color-mix(in srgb, var(--bg-0) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vf-line) 80%, transparent);
+  flex-shrink: 0;
 }
 
 .icon svg {
-  width: 1.65rem;
-  height: 1.65rem;
+  width: 1.45rem;
+  height: 1.45rem;
   display: block;
 }
 
 .label {
+  position: absolute;
+  top: calc(50% + 1.2rem);
+  left: 50%;
+  transform: translateX(-50%);
   font-family: var(--font-mono);
   font-size: 0.62rem;
   line-height: 1.2;
   text-align: center;
   color: var(--vf-ink);
-  max-width: 5.2rem;
+  white-space: nowrap;
 }
 
 .badge {
+  position: absolute;
+  top: calc(50% + 2.15rem);
+  left: 50%;
+  transform: translateX(-50%);
   font-family: var(--font-mono);
   font-size: 0.52rem;
   letter-spacing: 0.02em;

@@ -28,51 +28,68 @@ const COPY: Record<AuthMode, string> = {
     "① Pod reads role_id from a Kubernetes Secret (RBAC). ② Pod logs into Vault with role_id — no SA JWT and no TokenReview. (Lab used role_id only; real AppRole usually also needs secret_id.)",
 };
 
-/** viewBox 400×225 — node centers: pod (88,56), vault (312,56), k8s/secret (88,176) */
+/** Shared layout — viewBox 400×225. x/y are % of canvas (= px/W, px/H). */
+const VB = { w: 400, h: 225 } as const;
+const pct = (x: number, y: number) => ({
+  x: (x / VB.w) * 100,
+  y: (y / VB.h) * 100,
+});
+
+/** Icon centers in viewBox units — compact cluster so arrows meet the chips */
+const P = {
+  pod: { x: 155, y: 78 },
+  vault: { x: 245, y: 78 },
+  k8s: { x: 155, y: 158 },
+  secret: { x: 155, y: 158 },
+} as const;
+
 const NODES: Record<AuthMode, NodeDef[]> = {
   k8s: [
-    { id: "pod", label: "Pod", badge: "SA JWT", x: 22, y: 25 },
-    { id: "vault", label: "Vault", x: 78, y: 25 },
-    { id: "k8s", label: "K8s API", x: 22, y: 78 },
+    { id: "pod", label: "Pod", badge: "SA JWT", ...pct(P.pod.x, P.pod.y) },
+    { id: "vault", label: "Vault", ...pct(P.vault.x, P.vault.y) },
+    { id: "k8s", label: "K8s API", ...pct(P.k8s.x, P.k8s.y) },
   ],
   approle: [
-    { id: "pod", label: "Pod", x: 22, y: 25 },
-    { id: "vault", label: "Vault", x: 78, y: 25 },
-    { id: "secret", label: "Secret", badge: "role_id", x: 22, y: 78 },
+    { id: "pod", label: "Pod", ...pct(P.pod.x, P.pod.y) },
+    { id: "vault", label: "Vault", ...pct(P.vault.x, P.vault.y) },
+    { id: "secret", label: "Secret", badge: "role_id", ...pct(P.secret.x, P.secret.y) },
   ],
 };
+
+const midTag = (x: number, y: number) => ({
+  tagX: (x / VB.w) * 100,
+  tagY: (y / VB.h) * 100,
+});
+
+const GAP = 22; // clear icon border so arrow tips meet the chip edge
 
 const EDGES: Record<AuthMode, Edge[]> = {
   k8s: [
     {
       id: "login",
-      d: "M 110 56 L 288 56",
+      d: `M ${P.pod.x + GAP} ${P.pod.y} L ${P.vault.x - GAP} ${P.vault.y}`,
       tag: "② login (JWT)",
-      tagX: 50,
-      tagY: 16,
+      ...midTag((P.pod.x + P.vault.x) / 2, P.pod.y - 14),
     },
     {
       id: "review",
-      d: "M 300 78 C 250 120, 150 155, 110 176",
+      d: `M ${P.vault.x} ${P.vault.y + GAP} C ${P.vault.x - 10} ${P.vault.y + 55}, ${P.k8s.x + 55} ${P.k8s.y - 6}, ${P.k8s.x + GAP} ${P.k8s.y}`,
       tag: "③ TokenReview",
-      tagX: 56,
-      tagY: 62,
+      ...midTag(220, 128),
     },
   ],
   approle: [
     {
       id: "rbac",
-      d: "M 88 155 L 88 78",
+      d: `M ${P.secret.x} ${P.secret.y - GAP} L ${P.pod.x} ${P.pod.y + GAP}`,
       tag: "① RBAC read",
-      tagX: 36,
-      tagY: 52,
+      ...midTag(P.pod.x + 38, (P.pod.y + P.secret.y) / 2),
     },
     {
       id: "login",
-      d: "M 110 56 L 288 56",
+      d: `M ${P.pod.x + GAP} ${P.pod.y} L ${P.vault.x - GAP} ${P.vault.y}`,
       tag: "② login (role_id)",
-      tagX: 50,
-      tagY: 16,
+      ...midTag((P.pod.x + P.vault.x) / 2, P.pod.y - 14),
     },
   ],
 };
@@ -207,7 +224,7 @@ export default function VaultK8sAuthFlow() {
         <svg
           className={styles.svg}
           viewBox="0 0 400 225"
-          preserveAspectRatio="xMidYMid meet"
+          preserveAspectRatio="none"
           aria-hidden
         >
           <defs>
@@ -241,6 +258,7 @@ export default function VaultK8sAuthFlow() {
         <AnimatePresence mode="wait">
           <motion.div
             key={`nodes-${mode}`}
+            className={styles.layer}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
