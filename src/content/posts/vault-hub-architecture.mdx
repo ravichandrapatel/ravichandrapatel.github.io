@@ -1,6 +1,6 @@
 ---
-title: "Taming Vault OSS: a multi-tenant secret hub without policy sprawl"
-description: "Building a central HashiCorp Vault hub on OSS for a multi-tenant internal developer portal — identity metadata, one universal policy, kind validation, UI, and the footguns that actually bit."
+title: "Building a multi-tenant Vault hub on OSS without policy sprawl"
+description: "Standing up a central HashiCorp Vault on OSS for an internal developer portal — identity metadata, one shared policy, kind lab, UI, and the mistakes I hit."
 pubDate: 2026-08-01
 updatedDate: 2026-08-02
 tags: [vault, kubernetes, secrets, notes]
@@ -13,15 +13,15 @@ import vaultProdValues from "../snippets/vaultHubProdValues.ts";
 
 ## 1. Intro and Issue
 
-When building an internal developer portal, you inevitably hit a familiar wall: where do the secrets live?
+When you build an internal developer portal, you hit the same question sooner or later: where do the secrets live?
 
-What I'm creating here is a **central Vault Hub** for that portal — one broker shared by the control plane and application teams, running on **Vault OSS**, with multi-tenant isolation that doesn't depend on Enterprise namespaces. The design question is simple: can one app read only its own secrets, and get a hard deny everywhere else, without me writing a new policy file for every onboarding?
+I'm building a **central Vault Hub** for that portal — one Vault shared by the control plane and app teams, on **Vault OSS**, with tenant separation that doesn't need Enterprise namespaces. Simple test: can one app read only its own secrets, and get denied everywhere else, without me writing a new policy file for every app?
 
-I went through a lot of documentation and blogs and eventually narrowed it to Vault. I've been using Vault Enterprise across multiple projects for the past five years, so I want those same principles in this portal setup. I don't have the budget for an Enterprise license right now, so I'm on Vault OSS. Because OSS lacks namespaces, native DR, and read-replica standbys, I had to figure out what I could approximate and what I had to live without. That's fine — I still want the operational shape I'm used to.
+I read a lot of docs and blogs and landed on Vault. I've used Vault Enterprise on projects for about five years, so I want that same way of working here. I don't have money for an Enterprise license right now, so I'm on OSS. OSS doesn't have namespaces, native DR, or standbys that serve reads. Some of that I can fake. Some of it I can't. Fine — I still want the setup I'm used to running.
 
-Went back to the drawing board. During research one gap stood out: almost nobody writes clearly about **how to kill policy sprawl** when you're stuck on OSS and still need multi-tenant isolation.
+Went back to the drawing board. One gap kept showing up: almost nobody writes clearly about **how to stop policy sprawl** when you're on OSS and still need multi-tenant isolation.
 
-Let's take an example of an enterprise layout and stick with it for the rest of this note — lab, UI, and later when real clusters come online:
+Let's take a company-style example and keep it for the rest of this note — lab, UI, and later when real clusters show up:
 
 | Piece | Example |
 | --- | --- |
@@ -31,25 +31,25 @@ Let's take an example of an enterprise layout and stick with it for the rest of 
 | Neighbor business unit | `retail` |
 | Neighbor application | `oms` in `prod` |
 
-`finance` / `payment-api` should read its own path. The same identity must get **403** on `retail` / `oms`. Same Vault, same mount family (`test1-ou/`), different identity metadata. If that cross-read ever succeeds, the design failed.
+`finance` / `payment-api` should read its own path. That same identity must get **403** on `retail` / `oms`. Same Vault, same mount family (`test1-ou/`), different identity metadata. If payment-api can read retail's secrets, the design failed.
 
-From here the note follows one path: decision, how I proved it on kind, what broke, and what I'd trade off again.
+Rest of the note: what I decided, how I proved it on kind, what broke, and what I'd accept again.
 
 ## 2. Architecture and Decision
 
-For the portal I don't want a Vault per team. I need a **central Vault** where the control plane lives. Application teams, other clusters, and VMs authenticate into that same broker.
+For the portal I don't want a Vault per team. I need a **central Vault** where the control plane lives. App teams, other clusters, and VMs log into that same broker.
 
-I'm selecting a **three-node** Vault for real environments. Raft leader election wants an **odd** quorum (same idea as etcd). Three is the minimum I'll call HA. Five later if the platform gets serious. On OSS, multi-tenant isolation is **path convention + policies**. Namespaces and native DR stay Enterprise — I label that honestly.
+I'm picking a **three-node** Vault for real environments. Raft wants an **odd** number of nodes (same idea as etcd). Three is the smallest HA I'll take seriously. Five later if things grow. On OSS, tenant separation is **path layout + policies**. Namespaces and native DR stay Enterprise — I'll say that straight.
 
 ![Hub topology — clusters auth in; identity provider for humans; short-lived creds out](/posts/vault-hub/architecture.png)
 
-Three principles drive the rest of the design:
+Three rules for the rest of the design:
 
 1. **Identity first** — login lands on an Identity Entity with metadata.
-2. **Policy minimalism** — one universal policy template driven by that metadata.
-3. **Zero static credentials** in the workloads — short-lived machine auth, cloud KMS auto-unseal in real clusters, humans on OIDC.
+2. **Few policies** — one shared policy template driven by that metadata.
+3. **No static secrets in the apps** — short-lived machine auth, cloud KMS auto-unseal in real clusters, humans on OIDC.
 
-For the enterprise example above, the identity stamp on `payment-api` looks like this:
+For the company example above, the metadata on `payment-api` looks like this:
 
 | Metadata | Example | Notes |
 | --- | --- | --- |
@@ -63,19 +63,19 @@ For the enterprise example above, the identity stamp on `payment-api` looks like
 {{ou}}-ou/data/{{bu}}/{{app_name}}/{{env}}/*
 ```
 
-That resolves to:
+That becomes:
 
 - Allowed: `test1-ou/data/finance/payment-api/prod/...`
 - Denied for that same identity: `test1-ou/data/retail/oms/prod/...`
 
-The universal policy is one file for every app. Exact leaf **and** `/*` are both required — `vault kv get` hits the leaf; nested keys need the wildcard. Skim past Issues Encountered and you'll copy-paste a 403 into production.
+One shared policy for every app. You need the exact path **and** the `/*` path — `vault kv get` hits the exact path; nested keys need the wildcard. Skip Issues Encountered and you'll paste a 403 into prod.
 
 ```hcl
-# Exact leaf — what `vault kv get .../prod` hits (without this: 403)
+# Exact path — what `vault kv get .../prod` hits (without this: 403)
 path "{{identity.entity.metadata.ou}}-ou/data/{{identity.entity.metadata.bu}}/{{identity.entity.metadata.app_name}}/{{identity.entity.metadata.env}}" {
   capabilities = ["read", "list"]
 }
-# Nested keys under that leaf
+# Nested keys under that path
 path "{{identity.entity.metadata.ou}}-ou/data/{{identity.entity.metadata.bu}}/{{identity.entity.metadata.app_name}}/{{identity.entity.metadata.env}}/*" {
   capabilities = ["read", "list"]
 }
@@ -92,29 +92,29 @@ path "identity/entity/id/{{identity.entity.id}}" {
 
 Create the entity **with metadata before** the first login.
 
-I'm not creating one auth mount per cluster. I group by trust domain: `k8s-prod`, `k8s-nonprod`, `k8s-platform`. Roles bind `iss` (cluster issuer) and `sub` (namespace:SA). Toggle Native K8s vs AppRole below — the arrows are the trust boundary.
+I'm not creating one auth mount per cluster. I group by trust domain: `k8s-prod`, `k8s-nonprod`, `k8s-platform`. Roles bind `iss` (cluster issuer) and `sub` (namespace:SA). Toggle Native K8s vs AppRole below — watch where trust stops.
 
 <VaultK8sAuthFlow client:load />
 
-Native Kubernetes / JWT is the cleaner machine story. AppRole is what I used in the kind lab, because wiring a fake OIDC issuer into kind wasn't worth it for a policy proof.
+Native Kubernetes / JWT is the cleaner story for real clusters. AppRole is what I used in the kind lab, because fake OIDC in kind wasn't worth it just to prove the policy.
 
-Outside the lab I want three-node Raft, dual disks, TLS, an audit job, and a daily snapshot CronJob. Seal blocks stay commented until the cloud KMS ARNs are real. Click to open the full overlay; leave it closed if you're only here for the isolation proof.
+Outside the lab I want three-node Raft, two disks, TLS, an audit job, and a daily snapshot CronJob. Seal blocks stay commented until the cloud KMS ARNs are real. Click to open the full values file; leave it closed if you only care about the isolation proof.
 
 <ExpandCode
   client:load
-  title="values.yaml — production-shaped Vault Helm overlay"
+  title="values.yaml — production Vault Helm values"
   code={vaultProdValues}
   language="yaml"
   hint="Click to expand"
 />
 
-I did **not** use that overlay for the kind proof. Lab values stay tiny and ephemeral.
+I did **not** use that file for the kind proof. Lab values stay small and throwaway.
 
 ## 3. Execution and Validation
 
-To prove the enterprise example, I stood up a disposable Vault on kind, wrote a secret under **finance / payment-api / prod**, stamped an identity as that app, confirmed the read, then confirmed **retail / oms** returns 403. Dev mode isn't three-node Raft — it's the fastest way to prove the path before I burn time on quorum.
+To prove the company example, I stood up Vault on kind, wrote a secret under **finance / payment-api / prod**, set identity metadata for that app, checked the read, then checked that **retail / oms** returns 403. Dev mode isn't three-node Raft — it's the fast way to prove the path before I burn time on quorum.
 
-Commands below; I trimmed the generic success noise. Kept the outputs that actually matter for the proof.
+Commands below. I cut the boring success spam. Kept the outputs that matter for the proof.
 
 ### kind cluster
 
@@ -127,7 +127,7 @@ kubectl config use-context kind-vault-blog
 
 ### Helm install (lab values)
 
-Short-lived values — `dev` mode, root token, UI on. Not the production overlay.
+Small values — `dev` mode, root token, UI on. Not the production file.
 
 ```bash
 helm repo add hashicorp https://helm.releases.hashicorp.com
@@ -158,7 +158,7 @@ kubectl -n vault get pods,svc
 kubectl -n vault exec vault-0 -- vault status
 ```
 
-What you want to see on `vault status`: `Initialized true`, `Sealed false`, `Storage Type inmem`, `HA Enabled false`. That last pair is expected in **dev** mode.
+On `vault status` you want: `Initialized true`, `Sealed false`, `Storage Type inmem`, `HA Enabled false`. That last pair is normal in **dev** mode.
 
 ![kind pods and vault status](/posts/vault-hub/kind-vault-pods.png)
 
@@ -180,7 +180,7 @@ Browser: [http://127.0.0.1:8200/ui/](http://127.0.0.1:8200/ui/)
 
 ### KV, policy, entity, AppRole proof
 
-Same enterprise example on the wire: mount `test1-ou/`, write the finance secret (and a shared finance secret), stamp `payment-api`, then try `retail` / `oms`. I don't even need to create the retail secret — deny is enough.
+Same company example: mount `test1-ou/`, write the finance secret (and a shared finance secret), set `payment-api`, then try `retail` / `oms`. I don't even need to create the retail secret — deny is enough.
 
 ```bash
 kubectl -n vault exec -it vault-0 -- sh
@@ -200,7 +200,7 @@ UI check — **Secrets → Secrets engines** shows `test1-ou/`. Open it and you 
 
 ```bash
 cat > /tmp/universal.hcl <<'EOF'
-# Exact leaf — what `vault kv get .../prod` hits (without this: 403)
+# Exact path — what `vault kv get .../prod` hits (without this: 403)
 path "{{identity.entity.metadata.ou}}-ou/data/{{identity.entity.metadata.bu}}/{{identity.entity.metadata.app_name}}/{{identity.entity.metadata.env}}" {
   capabilities = ["read", "list"]
 }
@@ -227,7 +227,7 @@ vault write identity/entity name="payment-api-prod" \
   metadata=env=prod
 ```
 
-Entity create (keep this `id` — you'll need it for the alias):
+Entity create (keep this `id` — you need it for the alias):
 
 ```text
 Key        Value
@@ -309,35 +309,35 @@ kind delete cluster --name vault-blog
 
 ## 4. Issues Encountered
 
-**Exact leaf vs `/*`.** A policy that only ends in `.../{{env}}/*` grants under `.../prod/`. The exact leaf `.../prod` (what `vault kv get` hits) came back **403**. Capabilities on `.../prod/db_password` were fine. **Fix:** grant the exact leaf path as well (or trailing `*` on the leaf). That's why the universal policy has both stanzas.
+**Exact path vs `/*`.** A policy that only ends in `.../{{env}}/*` covers things *under* `.../prod/`. The exact path `.../prod` (what `vault kv get` hits) came back **403**. Reads on `.../prod/db_password` were fine. **Fix:** also grant the exact path (or put a trailing `*` on it). That's why the shared policy has both lines.
 
-**Bootstrap order.** If the workload logs in before the Identity Entity has metadata, you get a ghost entity and later “alias already exists” fights with Terraform. **Fix:** stamp entity + metadata + alias *before* the first login.
+**Bootstrap order.** If the app logs in before the Identity Entity has metadata, you get a ghost entity and later “alias already exists” fights with Terraform. **Fix:** create entity + metadata + alias *before* the first login.
 
-**Root token in the UI.** Works for kind. The UI itself warns that the root token isn't stored in the browser. Never use this pattern on a shared cluster.
+**Root token in the UI.** Fine for kind. The UI itself warns that the root token isn't stored in the browser. Don't do this on a shared cluster.
 
 **Docker socket on WSL.** `kind create` failed until `DOCKER_HOST=unix:///var/run/docker.sock` pointed at the real Docker engine instead of a broken containerd endpoint.
 
-**Port-forward flakiness.** CLI against `127.0.0.1:8200` died when the forward dropped. Running `vault` via `kubectl -n vault exec vault-0 -- ...` was more reliable for the lab script.
+**Port-forward flakiness.** CLI against `127.0.0.1:8200` died when the forward dropped. Running `vault` via `kubectl -n vault exec vault-0 -- ...` was more solid for the lab script.
 
-**OSS feature honesty.** I kept catching myself writing as if namespaces or warm-standby DR existed. They don't on OSS. Path + policy is the tenancy story until a license changes the rules.
+**OSS feature honesty.** I kept writing as if namespaces or warm-standby DR existed. They don't on OSS. Path + policy is the tenant story until a license changes that.
 
 ## 5. Pros and Cons
 
 | | Pros | Cons |
 | --- | --- | --- |
-| **Central Vault Hub** | One seal/backup/upgrade story; teams share a broker | Hub is a shared dependency — plan snapshots and restore |
-| **OSS + path tenancy** | No Enterprise license to start; metadata-driven isolation works | No namespaces; no native DR; OSS standbys do not serve reads |
-| **Universal policy** | Kills per-app policy files; onboarding is metadata + alias | Templating bugs (exact leaf) are easy to miss; bootstrap order matters |
+| **Central Vault Hub** | One place to seal, backup, and upgrade; teams share one broker | Hub is a shared dependency — plan snapshots and restore |
+| **OSS + path tenants** | No Enterprise license to start; metadata-based isolation works | No namespaces; no native DR; OSS standbys don't serve reads |
+| **One shared policy** | No pile of per-app policy files; onboarding is metadata + alias | Easy to miss the exact-path bug; create order matters |
 | **Trust-domain auth mounts** | Few mounts (`k8s-prod` / `nonprod` / `platform`) | Role design must bind `iss`/`sub` carefully |
-| **kind + Helm dev mode** | Fast proof of allow/deny and UI | `inmem`, no HA — must not confuse with the Raft values above |
-| **AppRole in the lab** | Easy without cluster OIDC | Weaker story than native K8s JWT for real workloads |
+| **kind + Helm dev mode** | Fast allow/deny and UI proof | `inmem`, no HA — don't confuse with the Raft values above |
+| **AppRole in the lab** | Easy without cluster OIDC | Weaker than native K8s JWT for real workloads |
 
 ## 6. Conclusions
 
-What I set out to create is a **Vault Hub for my internal developer portal**: one OSS broker, tenants isolated by metadata, one universal policy. I'll keep using the same enterprise example — `finance` / `payment-api` allowed, `retail` / `oms` denied — when I move from kind to Raft and when I swap AppRole for real Kubernetes JWT auth.
+What I set out to build is a **Vault Hub for my internal developer portal**: one OSS broker, tenants split by metadata, one shared policy. I'll keep using the same company example — `finance` / `payment-api` allowed, `retail` / `oms` denied — when I move from kind to Raft and when I swap AppRole for real Kubernetes JWT auth.
 
-I'm staying with that Hub model and a **three-node Raft** shape for anything past the lab. Kind + Helm **dev** mode was enough to prove allow and deny, and to walk the UI. The production values above are what I want next — TLS, dual disks, audit job, snapshot CronJob — once cloud KMS unseal and real storage classes are wired.
+I'm sticking with that Hub model and a **three-node Raft** shape for anything past the lab. Kind + Helm **dev** mode was enough to prove allow and deny, and to walk the UI. The production values above are next — TLS, two disks, audit job, snapshot CronJob — once cloud KMS unseal and real storage classes are wired.
 
-Policy sprawl was the research gap that started this. The lab answered it without a graveyard of `app-env.hcl` files.
+Policy sprawl was the research gap that started this. The lab answered it without a pile of `app-env.hcl` files.
 
-Next for me: trust-domain JWT against a real spoke OIDC issuer (still as `payment-api`), External Secrets / VSO on the universal path, and one Raft snapshot restore I've actually rehearsed.
+Next for me: trust-domain JWT against a real spoke OIDC issuer (still as `payment-api`), External Secrets / VSO on the shared path, and one Raft snapshot restore I've actually practiced.
