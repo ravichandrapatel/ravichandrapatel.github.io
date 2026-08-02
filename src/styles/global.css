@@ -2,7 +2,9 @@
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
-:root {
+:root,
+html[data-theme="dark"] {
+  color-scheme: dark;
   --bg-0: #0b1016;
   --bg-1: #121a24;
   --bg-2: #1a2533;
@@ -11,12 +13,70 @@
   --accent: #3ecf8e;
   --accent-2: #5b9fd4;
   --line: rgba(232, 238, 246, 0.12);
+  --header-bg: rgba(11, 16, 22, 0.55);
+  --glow-a: rgba(91, 159, 212, 0.18);
+  --glow-b: rgba(62, 207, 142, 0.12);
+  --btn-bg: rgba(26, 37, 51, 0.7);
+  --btn-primary-bg: linear-gradient(
+    135deg,
+    rgba(62, 207, 142, 0.25),
+    rgba(91, 159, 212, 0.2)
+  );
+  --btn-primary-border: rgba(62, 207, 142, 0.45);
+  --hero-fade: rgba(11, 16, 22, 0.85);
+  --grid-opacity: 0.35;
+  --cover-matte: #0b1016;
+  --graph-edge: rgba(154, 171, 191, 0.2);
+  --graph-edge-glow: rgba(91, 159, 212, 0.1);
+  --graph-edge-core: rgba(232, 244, 255, 0.28);
+  --graph-glow: rgba(91, 159, 212, 0.28);
+  --graph-node: rgba(12, 16, 22, 0.58);
+  --graph-node-stroke: rgba(232, 238, 246, 0.26);
+  --graph-dot: rgba(210, 222, 236, 0.65);
+  --graph-label: rgba(232, 238, 246, 0.88);
+  --graph-label-shadow: rgba(0, 0, 0, 0.55);
   --font-display: "Syne", sans-serif;
   --font-body: "Source Serif 4", Georgia, serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --max: 64rem;
   --wide: 64rem;
   --page-pad: clamp(1.25rem, 4vw, 2.5rem);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  /* Cool slate light — keep accent green/blue; avoid warm-cream cliché */
+  --bg-0: #f3f6fa;
+  --bg-1: #e7eef6;
+  --bg-2: #d9e3ef;
+  --ink: #121a24;
+  --ink-dim: #4a5d73;
+  --accent: #0b9b6a;
+  --accent-2: #1a6fb5;
+  --line: rgba(18, 26, 36, 0.12);
+  --header-bg: rgba(243, 246, 250, 0.8);
+  --glow-a: rgba(26, 111, 181, 0.12);
+  --glow-b: rgba(11, 155, 106, 0.1);
+  --btn-bg: rgba(255, 255, 255, 0.78);
+  --btn-primary-bg: linear-gradient(
+    135deg,
+    rgba(11, 155, 106, 0.18),
+    rgba(26, 111, 181, 0.14)
+  );
+  --btn-primary-border: rgba(11, 155, 106, 0.45);
+  /* Keep hero fade light so the tool graph stays readable behind CTAs */
+  --hero-fade: rgba(243, 246, 250, 0.55);
+  --grid-opacity: 0.28;
+  --cover-matte: #0b1016;
+  --graph-edge: rgba(45, 64, 86, 0.32);
+  --graph-edge-glow: rgba(26, 111, 181, 0.12);
+  --graph-edge-core: rgba(26, 111, 181, 0.35);
+  --graph-glow: rgba(26, 111, 181, 0.32);
+  --graph-node: rgba(255, 255, 255, 0.96);
+  --graph-node-stroke: rgba(18, 26, 36, 0.38);
+  --graph-dot: rgba(45, 64, 86, 0.75);
+  --graph-label: rgba(18, 26, 36, 0.92);
+  --graph-label-shadow: rgba(255, 255, 255, 0.9);
 }
 
 *,
@@ -26,7 +86,6 @@
 }
 
 html {
-  color-scheme: dark;
   scroll-behavior: smooth;
 }
 
@@ -38,10 +97,11 @@ body {
   line-height: 1.7;
   color: var(--ink);
   background:
-    radial-gradient(1200px 600px at 10% -10%, rgba(91, 159, 212, 0.18), transparent 55%),
-    radial-gradient(900px 500px at 90% 0%, rgba(62, 207, 142, 0.12), transparent 50%),
+    radial-gradient(1200px 600px at 10% -10%, var(--glow-a), transparent 55%),
+    radial-gradient(900px 500px at 90% 0%, var(--glow-b), transparent 50%),
     linear-gradient(180deg, var(--bg-0), var(--bg-1) 40%, var(--bg-0));
   background-attachment: fixed;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 body::before {
@@ -49,7 +109,7 @@ body::before {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  opacity: 0.35;
+  opacity: var(--grid-opacity);
   background-image: linear-gradient(var(--line) 1px, transparent 1px),
     linear-gradient(90deg, var(--line) 1px, transparent 1px);
   background-size: 48px 48px;
@@ -92,7 +152,51 @@ img {
   padding: 1.25rem max(var(--page-pad), calc((100% - var(--max)) / 2));
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(10px);
-  background: rgba(11, 16, 22, 0.55);
+  background: var(--header-bg);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: var(--btn-bg);
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.theme-toggle:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.theme-toggle svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  display: block;
+}
+
+.theme-toggle .icon-sun {
+  display: none;
+}
+
+html[data-theme="light"] .theme-toggle .icon-sun {
+  display: block;
+}
+
+html[data-theme="light"] .theme-toggle .icon-moon {
+  display: none;
 }
 
 .brand {
@@ -165,7 +269,7 @@ img {
   position: absolute;
   inset: auto 0 0;
   height: 40%;
-  background: linear-gradient(transparent, rgba(11, 16, 22, 0.85));
+  background: linear-gradient(transparent, var(--hero-fade));
   pointer-events: none;
 }
 
@@ -214,7 +318,7 @@ img {
   font-size: 0.8rem;
   text-decoration: none;
   border: 1px solid var(--line);
-  background: rgba(26, 37, 51, 0.7);
+  background: var(--btn-bg);
   color: var(--ink);
   transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
 }
@@ -226,8 +330,8 @@ img {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, rgba(62, 207, 142, 0.25), rgba(91, 159, 212, 0.2));
-  border-color: rgba(62, 207, 142, 0.45);
+  background: var(--btn-primary-bg);
+  border-color: var(--btn-primary-border);
 }
 
 .section {
@@ -275,14 +379,19 @@ img {
 
 .prose .post-cover {
   display: block;
-  margin: 0 0 1.75rem;
+  /* Title first, then cover — sit under the h1 */
+  margin: 0 0 1.25rem;
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 12px;
   overflow: hidden;
-  background: #0b1016;
+  background: var(--cover-matte);
   line-height: 0;
   font-size: 0;
+}
+
+.prose h1 + .post-cover {
+  margin-top: 0.35rem;
 }
 
 .prose .post-cover img {
@@ -296,14 +405,14 @@ img {
   aspect-ratio: 16 / 9;
   object-fit: contain;
   object-position: center;
-  background: #0b1016;
+  background: var(--cover-matte);
 }
 
 .prose h1 {
   font-family: var(--font-display);
   font-size: clamp(2.1rem, 4.5vw, 2.85rem);
   line-height: 1.15;
-  margin: 0 0 1.15rem;
+  margin: 0 0 0.85rem;
   max-width: none;
 }
 
@@ -330,6 +439,19 @@ img {
 .prose :where(p, ul, ol) {
   margin: 0 0 1.15rem;
   max-width: none;
+  font-family: var(--font-body);
+  font-size: 1.125rem;
+  line-height: 1.7;
+}
+
+.prose :where(strong) {
+  font-family: inherit;
+  font-weight: 600;
+}
+
+.prose :where(em) {
+  font-family: inherit;
+  font-style: italic;
 }
 
 .prose :where(ul, ol) {
@@ -566,7 +688,7 @@ img {
   border: 1px solid var(--line);
   border-radius: 10px;
   overflow: hidden;
-  background: #0b1016;
+  background: var(--cover-matte);
   aspect-ratio: 16 / 9;
 }
 

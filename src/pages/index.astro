@@ -17,7 +17,7 @@ const seeds = PLATFORM_TOOLS.map((tool) => ({
 
 <BaseLayout title="cloud-dispatch" path="/">
   <section class="hero">
-    <ObsidianGraphBg client:load seeds={seeds} />
+    <ObsidianGraphBg client:only="react" seeds={seeds} />
     <div class="hero-inner">
       <h1 class="hero-brand">cloud-<em>dispatch</em></h1>
       <p class="hero-lead">

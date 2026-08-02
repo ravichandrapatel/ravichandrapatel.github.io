@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { toolIconSvg, type ToolIconId } from "../lib/toolIcons";
+import { toolIconUrl, type ToolIconId } from "../lib/toolIcons";
 import styles from "./ObsidianGraphBg.module.css";
 
 export type GraphSeed = {
@@ -27,21 +27,42 @@ type SimNode = {
 
 type SimEdge = { a: SimNode; b: SimNode };
 
-function loadSvgImage(svg: string): Promise<HTMLImageElement> {
+function loadIconImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const blob = new Blob([svg], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(blob);
     const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve(img);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("icon load failed"));
-    };
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`icon load failed: ${url}`));
     img.src = url;
   });
+}
+
+type GraphPalette = {
+  edge: string;
+  edgeGlow: string;
+  edgeCore: string;
+  glow: string;
+  node: string;
+  nodeStroke: string;
+  dot: string;
+  label: string;
+  labelShadow: string;
+};
+
+function graphPalette(): GraphPalette {
+  const s = getComputedStyle(document.documentElement);
+  const v = (name: string, fallback: string) =>
+    s.getPropertyValue(name).trim() || fallback;
+  return {
+    edge: v("--graph-edge", "rgba(186, 210, 235, 0.28)"),
+    edgeGlow: v("--graph-edge-glow", "rgba(91, 159, 212, 0.22)"),
+    edgeCore: v("--graph-edge-core", "rgba(232, 244, 255, 0.7)"),
+    glow: v("--graph-glow", "rgba(91, 159, 212, 0.28)"),
+    node: v("--graph-node", "rgba(12, 16, 22, 0.58)"),
+    nodeStroke: v("--graph-node-stroke", "rgba(232, 238, 246, 0.26)"),
+    dot: v("--graph-dot", "rgba(210, 222, 236, 0.65)"),
+    label: v("--graph-label", "rgba(232, 238, 246, 0.88)"),
+    labelShadow: v("--graph-label-shadow", "rgba(0, 0, 0, 0.55)"),
+  };
 }
 
 /** Deterministic pseudo-random in [-0.5, 0.5) from a string seed. */
@@ -51,48 +72,52 @@ function jitter(id: string, salt: number): number {
   return ((h >>> 0) % 1000) / 1000 - 0.5;
 }
 
+function tickForces(nodes: SimNode[], edges: SimEdge[], heat: number) {
+  for (const e of edges) {
+    const dx = e.b.x - e.a.x;
+    const dy = e.b.y - e.a.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const f = (d - 110) * 0.014 * heat;
+    e.a.vx += (dx / d) * f;
+    e.a.vy += (dy / d) * f;
+    e.b.vx -= (dx / d) * f;
+    e.b.vy -= (dy / d) * f;
+  }
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i];
+      const b = nodes[j];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const d2 = dx * dx + dy * dy || 1;
+      const f = Math.min(2200 / d2, 3.6) * heat;
+      const d = Math.sqrt(d2);
+      a.vx -= (dx / d) * f;
+      a.vy -= (dy / d) * f;
+      b.vx += (dx / d) * f;
+      b.vy += (dy / d) * f;
+    }
+  }
+  for (const n of nodes) {
+    n.vx -= n.x * 0.0014 * heat;
+    n.vy -= n.y * 0.0014 * heat;
+    n.x += n.vx;
+    n.y += n.vy;
+    n.vx *= 0.86;
+    n.vy *= 0.86;
+  }
+}
+
 function layoutOnce(nodes: SimNode[], edges: SimEdge[], ticks = 220) {
   let heat = 1;
   for (let t = 0; t < ticks; t++) {
-    for (const e of edges) {
-      const dx = e.b.x - e.a.x;
-      const dy = e.b.y - e.a.y;
-      const d = Math.hypot(dx, dy) || 1;
-      const f = (d - 110) * 0.014 * heat;
-      e.a.vx += (dx / d) * f;
-      e.a.vy += (dy / d) * f;
-      e.b.vx -= (dx / d) * f;
-      e.b.vy -= (dy / d) * f;
-    }
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i];
-        const b = nodes[j];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const d2 = dx * dx + dy * dy || 1;
-        const f = Math.min(2200 / d2, 3.6) * heat;
-        const d = Math.sqrt(d2);
-        a.vx -= (dx / d) * f;
-        a.vy -= (dy / d) * f;
-        b.vx += (dx / d) * f;
-        b.vy += (dy / d) * f;
-      }
-    }
-    for (const n of nodes) {
-      n.vx -= n.x * 0.0014 * heat;
-      n.vy -= n.y * 0.0014 * heat;
-      n.x += n.vx;
-      n.y += n.vy;
-      n.vx *= 0.86;
-      n.vy *= 0.86;
-    }
+    tickForces(nodes, edges, heat);
     heat *= 0.985;
   }
 }
 
 /**
- * Decorative tool graph — layout + paint once. No animation loop.
+ * Decorative tool graph — force-settles on load/refresh, then freezes.
  */
 export default function ObsidianGraphBg({ seeds }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -103,22 +128,29 @@ export default function ObsidianGraphBg({ seeds }: Props) {
     const wrap = wrapRef.current;
     if (!canvas || !wrap || seeds.length === 0) return;
 
-    const ctx = canvas.getContext("2d", { alpha: true });
+    const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true });
     if (!ctx) return;
 
     let cancelled = false;
+    let alive = true;
     let nodes: SimNode[] = [];
     let edges: SimEdge[] = [];
     let dpr = 1;
     let view = { x: 0, y: 0, k: 1 };
     let painted = false;
+    let settled = false;
+    let alpha = 1;
+    let raf = 0;
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
 
     const size = () => ({
       w: Math.max(1, wrap.clientWidth),
       h: Math.max(1, wrap.clientHeight),
     });
 
-    const draw = () => {
+    const syncView = () => {
       const { w, h } = size();
       dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
       const bw = Math.round(w * dpr);
@@ -128,6 +160,11 @@ export default function ObsidianGraphBg({ seeds }: Props) {
         canvas.height = bh;
       }
       view = { x: w * 0.58, y: h * 0.38, k: Math.min(w, h) / 560 };
+    };
+
+    const draw = () => {
+      const { w, h } = size();
+      syncView();
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
@@ -135,22 +172,41 @@ export default function ObsidianGraphBg({ seeds }: Props) {
       ctx.translate(view.x, view.y);
       ctx.scale(view.k, view.k);
       ctx.lineCap = "round";
+      const pal = graphPalette();
 
+      // Soft Obsidian edge glow: light bloom + thin core
+      ctx.lineJoin = "round";
       for (const e of edges) {
-        ctx.beginPath();
-        ctx.moveTo(e.a.x, e.a.y);
-        ctx.lineTo(e.b.x, e.b.y);
-        ctx.strokeStyle = "rgba(154, 171, 191, 0.16)";
+        const stroke = () => {
+          ctx.beginPath();
+          ctx.moveTo(e.a.x, e.a.y);
+          ctx.lineTo(e.b.x, e.b.y);
+          ctx.stroke();
+        };
+
+        ctx.strokeStyle = pal.edgeGlow;
+        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = 4 / view.k;
+        stroke();
+
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = pal.edge;
         ctx.lineWidth = 1.1 / view.k;
-        ctx.stroke();
+        stroke();
+
+        ctx.strokeStyle = pal.edgeCore;
+        ctx.globalAlpha = 0.35;
+        ctx.lineWidth = 0.55 / view.k;
+        stroke();
+        ctx.globalAlpha = 1;
       }
 
       for (const n of nodes) {
         const plate = n.icon ? n.r + 3 : n.r;
         const glow = plate + 7;
         const grad = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, glow);
-        grad.addColorStop(0, "rgba(91, 159, 212, 0.28)");
-        grad.addColorStop(1, "rgba(91, 159, 212, 0)");
+        grad.addColorStop(0, pal.glow);
+        grad.addColorStop(1, "rgba(0, 0, 0, 0)");
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.arc(n.x, n.y, glow, 0, Math.PI * 2);
@@ -158,12 +214,26 @@ export default function ObsidianGraphBg({ seeds }: Props) {
 
         if (n.icon) {
           const s = n.r * 1.55;
+          const light =
+            document.documentElement.getAttribute("data-theme") === "light";
+          if (light) {
+            ctx.beginPath();
+            ctx.arc(
+              n.x + 1.2 / view.k,
+              n.y + 1.6 / view.k,
+              plate + 2,
+              0,
+              Math.PI * 2,
+            );
+            ctx.fillStyle = "rgba(18, 26, 36, 0.14)";
+            ctx.fill();
+          }
           ctx.beginPath();
           ctx.arc(n.x, n.y, plate + 1.5, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(12, 16, 22, 0.58)";
+          ctx.fillStyle = pal.node;
           ctx.fill();
-          ctx.strokeStyle = "rgba(232, 238, 246, 0.26)";
-          ctx.lineWidth = 1 / view.k;
+          ctx.strokeStyle = pal.nodeStroke;
+          ctx.lineWidth = (light ? 1.35 : 1) / view.k;
           ctx.stroke();
           ctx.globalAlpha = 0.95;
           ctx.drawImage(n.icon, n.x - s / 2, n.y - s / 2, s, s);
@@ -171,7 +241,7 @@ export default function ObsidianGraphBg({ seeds }: Props) {
         } else {
           ctx.beginPath();
           ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(210, 222, 236, 0.65)";
+          ctx.fillStyle = pal.dot;
           ctx.fill();
         }
 
@@ -186,9 +256,9 @@ export default function ObsidianGraphBg({ seeds }: Props) {
           const ty = n.y;
           ctx.font = `600 ${fs / view.k}px "IBM Plex Mono", ui-monospace, monospace`;
           ctx.textBaseline = "middle";
-          ctx.fillStyle = "rgba(0,0,0,0.55)";
+          ctx.fillStyle = pal.labelShadow;
           ctx.fillText(text, tx + 0.7 / view.k, ty + 0.7 / view.k);
-          ctx.fillStyle = "rgba(232, 238, 246, 0.88)";
+          ctx.fillStyle = pal.label;
           ctx.fillText(text, tx, ty);
         }
       }
@@ -196,22 +266,20 @@ export default function ObsidianGraphBg({ seeds }: Props) {
       painted = true;
     };
 
-    const boot = async () => {
-      const iconIds = [
-        ...new Set(seeds.map((s) => s.icon).filter(Boolean)),
-      ] as ToolIconId[];
-      const loaded = new Map<ToolIconId, HTMLImageElement>();
-      await Promise.all(
-        iconIds.map(async (id) => {
-          try {
-            loaded.set(id, await loadSvgImage(toolIconSvg(id)));
-          } catch {
-            /* keep fallback */
-          }
-        }),
-      );
-      if (cancelled) return;
+    const step = () => {
+      if (!alive || settled || cancelled) return;
+      tickForces(nodes, edges, alpha);
+      alpha *= 0.985;
+      draw();
+      if (alpha < 0.01) {
+        settled = true;
+        draw();
+        return;
+      }
+      raf = requestAnimationFrame(step);
+    };
 
+    const buildGraph = (loaded: Map<ToolIconId, HTMLImageElement>) => {
       const byId = new Map<string, SimNode>();
       nodes = seeds.map((s, i) => {
         const angle = (i / Math.max(1, seeds.length)) * Math.PI * 2;
@@ -222,8 +290,8 @@ export default function ObsidianGraphBg({ seeds }: Props) {
           icon: s.icon ? loaded.get(s.icon) : undefined,
           x: Math.cos(angle) * spread + jitter(s.id, 1) * 40,
           y: Math.sin(angle) * spread * 0.72 + jitter(s.id, 2) * 40,
-          vx: 0,
-          vy: 0,
+          vx: jitter(s.id, 3) * 0.35,
+          vy: jitter(s.id, 4) * 0.35,
           r: s.icon && loaded.has(s.icon) ? 13 : 3,
         };
         byId.set(s.id, node);
@@ -251,27 +319,73 @@ export default function ObsidianGraphBg({ seeds }: Props) {
           addEdge(seeds[i].id, seeds[(i + 3) % seeds.length].id);
         }
       }
+    };
 
-      layoutOnce(nodes, edges);
+    const boot = async () => {
+      const iconIds = [
+        ...new Set(seeds.map((s) => s.icon).filter(Boolean)),
+      ] as ToolIconId[];
+      const loaded = new Map<ToolIconId, HTMLImageElement>();
+      await Promise.all(
+        iconIds.map(async (id) => {
+          try {
+            loaded.set(id, await loadIconImage(toolIconUrl(id)));
+          } catch {
+            /* keep fallback */
+          }
+        }),
+      );
+      if (cancelled || !alive) return;
+
+      buildGraph(loaded);
+      syncView();
+
+      if (reduceMotion) {
+        layoutOnce(nodes, edges);
+        settled = true;
+        draw();
+        requestAnimationFrame(() => {
+          if (!cancelled && nodes.length) draw();
+        });
+        return;
+      }
+
+      // Paint first frame immediately, then settle with the force loop.
       draw();
+      raf = requestAnimationFrame(step);
     };
 
     let lastW = 0;
     let lastH = 0;
     const ro = new ResizeObserver(() => {
-      if (!painted || cancelled) return;
+      if (cancelled || nodes.length === 0) return;
       const { w, h } = size();
-      if (w === lastW && h === lastH) return;
+      if (w < 2 || h < 2) return;
+      if (w === lastW && h === lastH && painted) return;
       lastW = w;
       lastH = h;
-      draw();
+      if (settled) draw();
+      else syncView();
     });
     ro.observe(wrap);
+    const onTheme = () => {
+      if (!cancelled && nodes.length && settled) draw();
+    };
+    document.addEventListener("cd-themechange", onTheme);
+    const mo = new MutationObserver(onTheme);
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
     void boot();
 
     return () => {
       cancelled = true;
+      alive = false;
+      cancelAnimationFrame(raf);
       ro.disconnect();
+      mo.disconnect();
+      document.removeEventListener("cd-themechange", onTheme);
     };
   }, [seeds]);
 

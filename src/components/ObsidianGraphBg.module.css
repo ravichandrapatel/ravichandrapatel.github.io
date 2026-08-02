@@ -20,6 +20,23 @@
   );
 }
 
+/* Light theme: hold contrast longer toward the edges */
+:global(html[data-theme="light"]) .wrap {
+  opacity: 1;
+  mask-image: radial-gradient(
+    ellipse 98% 95% at 55% 42%,
+    #000 62%,
+    rgba(0, 0, 0, 0.72) 84%,
+    transparent 100%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse 98% 95% at 55% 42%,
+    #000 62%,
+    rgba(0, 0, 0, 0.72) 84%,
+    transparent 100%
+  );
+}
+
 .canvas {
   display: block;
   width: 100%;

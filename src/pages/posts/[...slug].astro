@@ -30,6 +30,7 @@ const coverVersion =
   cover={cover}
 >
   <article class="prose">
+    <h1>{post.data.title}</h1>
     {
       coverSrc && (
         <figure class="post-cover">
@@ -43,7 +44,6 @@ const coverVersion =
         </figure>
       )
     }
-    <h1>{post.data.title}</h1>
     <p class="meta">
       {post.data.pubDate.toISOString().slice(0, 10)}
       {" · field note · "}

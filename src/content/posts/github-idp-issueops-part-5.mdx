@@ -1,28 +1,59 @@
 ---
-title: "Building an IDP on a Shoestring: Drift Detection Without Quiet Destroys"
-description: "Day-2 for the GitHub-only IDP — detect OpenTofu drift on the workload, report it, reconcile create/update safely, and never auto-apply destroys."
+title: "Building an Internal Developer Platform on a Shoestring - Part 5: The Day-2 Gap — Drift Without Quiet Destroys"
+description: "Extension to the GitHub-only IDP series — the provision path shipped without drift detection. What’s missing, why quiet destroys are worse, and the workload-owned fix I’m wiring now."
 pubDate: 2026-08-12T13:30:00.000Z
-updatedDate: 2026-08-12T13:30:00.000Z
+updatedDate: 2026-08-12T14:00:00.000Z
 tags: [github-actions, issueops, idp, platform-engineering, github, opentofu, security, notes]
 draft: true
-cover: /posts/github-idp/cover-05.png
+cover: /posts/github-idp/cover-05.svg
 ---
 
-*Provision is the happy path. ClickOps and surprise cloud edits are the other path. This post is how the GitHub-only IDP notices drift — and how it refuses to “fix” it by quietly deleting things.*
+*This is an extension of [parts 1–4](/posts/github-idp-issueops-part-1/), not a fifth product pitch. The shoestring IDP can provision. It could not honestly answer “did someone ClickOps the bucket?” That gap is on me. Here’s the flaw, what I’m adding, and the hard rule: never auto-fix drift by quietly destroying resources.*
 
-[Assumes](#0-assumes) · [Why](#1-why-drift-is-a-workload-problem) · [Classify](#2-classify-before-you-reconcile) · [Wire](#3-wire-drift-reconcile) · [Solve](#4-how-to-solve-it) · [Destroy](#5-destroy-is-a-different-product) · [Checklist](#6-checklist) · [Next](#whats-next)
+[Gap](#1-the-flaw-in-what-i-already-shipped) · [Need](#2-what-we-actually-need) · [Doing](#3-what-im-doing-about-it) · [Classify](#4-classify-before-you-reconcile) · [Wire](#5-wire-drift-reconcile) · [Solve](#6-how-to-solve-it) · [Destroy](#7-destroy-is-a-different-product) · [Checklist](#8-checklist) · [Next](#whats-next)
 
-## 0. Assumes
+## 1. The flaw in what I already shipped
 
-Prior posts: [architecture](/posts/github-idp-issueops-part-1/), [operator UX](/posts/github-idp-issueops-part-2/), [provision path](/posts/github-idp-issueops-part-3/), [bootstrap & harden](/posts/github-idp-issueops-part-4/).
+[Part 1](/posts/github-idp-issueops-part-1/) drew the trust cut. [Part 2](/posts/github-idp-issueops-part-2/) made the Issue Form the portal. [Part 3](/posts/github-idp-issueops-part-3/) walked App PR → `tofu-pipeline`. [Part 4](/posts/github-idp-issueops-part-4/) was bootstrap and harden.
 
-You already have `infra-dev` / `infra-prod` calling pinned `tofu-pipeline`. Git is source of truth. Control never holds cloud apply. Good — keep that sentence intact for day-2.
+That arc is a **day-1 / day-0** story: request → Git → plan → gated apply. It assumes the happy path stays happy. It does not.
 
-## 1. Why drift is a workload problem
+**What’s missing:** after apply, the cloud can diverge from Git — console edits, “quick” IAM tweaks, a deleted tag, a renamed bucket. Parts 1–4 never scheduled a plan against live state. We said “Git is source of truth” and then looked away. That’s a design hole, not a footnote.
 
-Drift is “cloud reality ≠ Git desired state.” Detecting it means `tofu plan` against real state — which means **OIDC on the workload**, same trust domain as plan/apply.
+Worse trap if you “fix” it wrong: a reconcile job that re-applies desired state **including destroys**. Someone ClickOps’d a rename; OpenTofu wants to delete the old name. An unattended stamp merge at 3 a.m. is how you teach the org that GitOps is scary.
 
-Control can open Issues and App PRs for *intake*. It must not grow a second apply path “just for drift.” If that sentence feels inconvenient, re-read [part 1](/posts/github-idp-issueops-part-1/).
+So the flaw is twofold:
+
+1. **No detect** — drift is invisible until the next human PR.  
+2. **Unsafe solve** — blind reconcile can destroy.
+
+Control still must not grow a second apply path. The fix stays on the **workload**, same trust domain as [part 1](/posts/github-idp-issueops-part-1/).
+
+## 2. What we actually need
+
+| Need | Why |
+| --- | --- |
+| Workload-owned cron / dispatch | Detect means `tofu plan` + OIDC — control never holds that |
+| One Drift Report issue | Rolling signal operators can triage |
+| Split **safe** vs **destroy** | create/update ≠ delete/replace |
+| Dev: stamp PR for safe only | Reuse `tofu-pipeline` + Environment gate — no apply-on-`main` side door |
+| Prod: report only | Humans open PRs; no quiet reconcile |
+| Conftest deny destroy on `drift/*` | Belt and suspenders if a stamp PR ever carries a delete |
+
+That’s the product. Not a portal. Not a second control plane.
+
+## 3. What I’m doing about it
+
+Greenfield in `gh-platform-actions` (not bolted onto an old auditor from another monorepo):
+
+| Piece | Role |
+| --- | --- |
+| `drift-reconcile.yml` | Reusable workflow — OIDC plan, issue, optional stamp PR |
+| `scripts/drift_reconcile.py` | Parallel plans, classify, GitHub issue/PR |
+| `policies/conftest/terraform-drift/` | Deny `delete` on `drift/*` heads inside `tofu-pipeline` |
+| `examples/infra-*/drift.yml` | Dev: `open_reconcile_pr: true` · Prod: `false` |
+
+Flow:
 
 ```text
 schedule / workflow_dispatch on infra-<env>
@@ -39,15 +70,9 @@ tofu-pipeline on stamp PR      plan → (merge) → Environment apply
                                + Conftest deny destroy on drift/* branches
 ```
 
-Reusable pieces live in `gh-platform-actions`:
+Assumes you already stood up parts 1–4: pinned `tofu-pipeline`, private workloads, OIDC that can plan on `main` for schedule (detect has **no** Environment gate — same idea as the pipeline `plan` job).
 
-| Piece | Role |
-| --- | --- |
-| `drift-reconcile.yml` | Reusable workflow (OIDC plan, issue, optional PR) |
-| `scripts/drift_reconcile.py` | Parallel plans, classify, GitHub issue/PR |
-| `policies/conftest/terraform-drift/` | Deny `delete` on `drift/*` PRs |
-
-## 2. Classify before you reconcile
+## 4. Classify before you reconcile
 
 Every stack plan lands in one bucket:
 
@@ -57,23 +82,21 @@ Every stack plan lands in one bucket:
 | **safe** | `create` / `update` only | Dev: yes · Prod: no |
 | **destroy** | Any `delete` (including replace) | **Never** |
 
-That split is the whole product. Re-applying Git when someone ClickOps’d a tag is boring and correct. Re-applying Git when the plan wants to **destroy** a bucket because someone renamed it in the console is how you get a memorable afternoon.
+That split is the whole fix. Re-applying Git when someone ClickOps’d a tag is boring and correct. Re-applying when the plan wants to **destroy** a bucket because someone renamed it in the console is how you get a memorable afternoon.
 
-**Env policy (H2):**
+**Env policy:**
 
 | Repo | Drift Report issue | Stamp PR |
 | --- | --- | --- |
 | `infra-dev` | Yes | Yes (safe only) |
 | `infra-prod` | Yes | No — humans open PRs |
 
-## 3. Wire drift-reconcile
+## 5. Wire drift-reconcile
 
-Copy the example callers (same Actions SHA as `tofu.yml` / `pins.yaml` **after** you publish the workflow):
+Copy the example callers (same Actions SHA as `tofu.yml` / `pins.yaml` **after** the workflow is on the SHA you pin):
 
 - [`examples/infra-dev/.../drift.yml`](https://github.com/ravichandrapatel/gh-platform-control/blob/main/examples/infra-dev/.github/workflows/drift.yml) — `open_reconcile_pr: true`
 - [`examples/infra-prod/.../drift.yml`](https://github.com/ravichandrapatel/gh-platform-control/blob/main/examples/infra-prod/.github/workflows/drift.yml) — `open_reconcile_pr: false`
-
-Minimal shape:
 
 ```yaml
 name: drift
@@ -92,20 +115,20 @@ jobs:
       modules_git_token: ${{ secrets.MODULES_GIT_TOKEN }}
 ```
 
-**OIDC note:** detect has **no** GitHub Environment gate (same idea as the pipeline `plan` job). Your IAM trust must allow the schedule/dispatch subject on `main` (often `ref:refs/heads/main`), not only `environment:dev` / `environment:prod`.
+**OIDC note:** IAM trust must allow the schedule/dispatch subject on `main` (often `ref:refs/heads/main`), not only `environment:dev` / `environment:prod`.
 
 Docs: [drift-reconcile](https://github.com/ravichandrapatel/gh-platform-actions/blob/main/docs/workflows/drift-reconcile.md).
 
-## 4. How to solve it
+## 6. How to solve it
 
 ### Safe drift on dev
 
-1. Cron opens/updates **Infrastructure Drift Report**.
-2. For create/update-only stacks it opens/updates branch `drift/reconcile` with a tiny `stacks/<name>/.drift-reconcile` stamp (so `tofu.yml` path filters fire).
-3. Review the PR — plan should restore Git desired state.
+1. Cron opens/updates **Infrastructure Drift Report**.  
+2. For create/update-only stacks it opens/updates `drift/reconcile` with a tiny `stacks/<name>/.drift-reconcile` stamp (so `tofu.yml` path filters fire).  
+3. Review the PR — plan should restore Git desired state.  
 4. Merge → Environment-gated apply (same gate as IssueOps).
 
-Git was already right; the stamp is just a ticket into the existing pipeline. No “apply `main` without a PR” side door.
+Git was already right; the stamp is a ticket into the existing pipeline.
 
 ### Prod (report only)
 
@@ -113,39 +136,46 @@ Read the issue. Open a normal workload PR (or encode an intentional cloud change
 
 ### Expected / noisy drift
 
-Pass `exclude` patterns into `drift-reconcile` (substring or `stack:substring`) for known benign diffs. Matching addresses are **dropped from the drift count** (a stack can become `clean`). Keep that list short — a long exclude file is how you train yourself to ignore real ClickOps.
+Pass `exclude` patterns (substring or `stack:substring`). Matching addresses are **dropped from the drift count** (a stack can become `clean`). Keep that list short.
 
-## 5. Destroy is a different product
+## 7. Destroy is a different product
 
 If the plan includes **any** delete:
 
-1. **No stamp PR.** The classifier stops there.
-2. The Drift Report lists stack + address + actions.
-3. A human decides: fix ClickOps to match Git, or change Git to match reality (import / rewrite / intentional destroy PR).
-4. Defense in depth: `tofu-pipeline` runs Conftest `terraform-drift` on any PR whose head ref starts with `drift/` and **fails** if a delete appears anyway.
+1. **No stamp PR.**  
+2. The Drift Report lists stack + address + actions.  
+3. A human decides: fix ClickOps to match Git, or change Git to match reality.  
+4. `tofu-pipeline` still runs Conftest `terraform-drift` on `drift/*` PRs and **fails** if a delete appears anyway.
 
-Intentional teardown of a stack is still a normal Git PR on a non-`drift/` branch — IssueOps or hand-written — with Environment approval. Drift automation does not get a destroy fast path. On purpose.
+Intentional teardown stays a normal Git PR on a non-`drift/` branch — with Environment approval. Drift automation does not get a destroy fast path. On purpose. That’s the correction to the series, not a side note.
 
-## 6. Checklist
+## 8. Checklist
 
 | # | Check |
 | --- | --- |
-| 1 | `drift-reconcile` published; workloads pin the **same** SHA as `tofu-pipeline` |
+| 1 | `drift-reconcile` on a pinable SHA; workloads match `tofu-pipeline` |
 | 2 | `drift.yml` on `infra-dev` with `open_reconcile_pr: true` |
 | 3 | `drift.yml` on `infra-prod` with `open_reconcile_pr: false` |
 | 4 | OIDC trust allows schedule on `main` for plan role |
-| 5 | Manual `workflow_dispatch` produces a Drift Report (or closes clean) |
-| 6 | Inject a safe tag drift on dev → stamp PR → plan green → apply restores |
-| 7 | Inject / simulate a destroy plan → **issue only**, no stamp PR; `drift/*` PR with delete fails Conftest |
+| 5 | Manual `workflow_dispatch` → Drift Report (or closes clean) |
+| 6 | Safe tag drift on dev → stamp PR → plan green → apply restores |
+| 7 | Destroy plan → **issue only**; `drift/*` + delete fails Conftest |
 
 ## What’s next
 
-**Done in this post:** workload-owned detect, safe vs destroy split, dev stamp PR vs prod report-only, Conftest belt-and-suspenders.
+**Done in this extension:** named the day-2 hole in parts 1–4, workload-owned detect, safe vs destroy split, destroy never quiet.
 
-**Next for you:** run the checklist on `infra-dev`, then turn on prod report-only once you trust the signal. Keep adding products through IssueOps — drift rides along for every `stacks/*` root.
+**Next for you:** run the checklist on `infra-dev`, then prod report-only. Keep shipping products through IssueOps — drift rides along for every `stacks/*` root.
 
-### Related reading
+### Series
 
-- [Stand-up & harden](/posts/github-idp-issueops-part-4/)  
-- Control day ops: [DAY_OPERATIONS.md](https://github.com/ravichandrapatel/gh-platform-control/blob/main/docs/DAY_OPERATIONS.md) (§3.4)  
+1. [Architecture](/posts/github-idp-issueops-part-1/)  
+2. [Issue Forms & public gate](/posts/github-idp-issueops-part-2/)  
+3. [Label → plan](/posts/github-idp-issueops-part-3/)  
+4. [Bootstrap & harden](/posts/github-idp-issueops-part-4/)  
+5. **This extension** — day-2 drift (draft)
+
+### Related
+
+- Control: [DAY_OPERATIONS.md](https://github.com/ravichandrapatel/gh-platform-control/blob/main/docs/DAY_OPERATIONS.md) (§3.4)  
 - Actions: [drift-reconcile](https://github.com/ravichandrapatel/gh-platform-actions/blob/main/docs/workflows/drift-reconcile.md)

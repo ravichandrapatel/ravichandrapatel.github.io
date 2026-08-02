@@ -81,6 +81,23 @@ const jsonLd = {
     />
     <title>{pageTitle}</title>
     <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
+    <script is:inline>
+      (function () {
+        try {
+          var key = "cd-theme";
+          var stored = localStorage.getItem(key);
+          var theme =
+            stored === "light" || stored === "dark"
+              ? stored
+              : window.matchMedia("(prefers-color-scheme: light)").matches
+                ? "light"
+                : "dark";
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (_) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div class="site-shell">
@@ -96,15 +113,32 @@ const jsonLd = {
           />
           <span class="brand-text">cloud-<em>dispatch</em></span>
         </a>
-        <nav class="nav" aria-label="Primary">
-          <a href={base} aria-current={path === "/" ? "page" : undefined}>Home</a>
-          <a href={`${base}posts/`} aria-current={path.startsWith("/posts") ? "page" : undefined}
-            >Notes</a
+        <div class="header-actions">
+          <nav class="nav" aria-label="Primary">
+            <a href={base} aria-current={path === "/" ? "page" : undefined}>Home</a>
+            <a href={`${base}posts/`} aria-current={path.startsWith("/posts") ? "page" : undefined}
+              >Notes</a
+            >
+            <a href={`${base}about/`} aria-current={path === "/about/" ? "page" : undefined}
+              >About</a
+            >
+          </nav>
+          <button
+            type="button"
+            class="theme-toggle"
+            id="theme-toggle"
+            aria-label="Toggle light and dark theme"
+            title="Toggle theme"
           >
-          <a href={`${base}about/`} aria-current={path === "/about/" ? "page" : undefined}
-            >About</a
-          >
-        </nav>
+            <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"></path>
+            </svg>
+            <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+            </svg>
+          </button>
+        </div>
       </header>
       <main class="site-main">
         <slot />
@@ -113,5 +147,32 @@ const jsonLd = {
         <p>© {new Date().getFullYear()} {SITE_AUTHOR}</p>
       </footer>
     </div>
+    <script is:inline>
+      (function () {
+        var key = "cd-theme";
+        var btn = document.getElementById("theme-toggle");
+        if (!btn) return;
+
+        function current() {
+          return document.documentElement.getAttribute("data-theme") === "light"
+            ? "light"
+            : "dark";
+        }
+
+        function apply(theme) {
+          document.documentElement.setAttribute("data-theme", theme);
+          try {
+            localStorage.setItem(key, theme);
+          } catch (_) {}
+          document.dispatchEvent(
+            new CustomEvent("cd-themechange", { detail: { theme: theme } }),
+          );
+        }
+
+        btn.addEventListener("click", function () {
+          apply(current() === "light" ? "dark" : "light");
+        });
+      })();
+    </script>
   </body>
 </html>
