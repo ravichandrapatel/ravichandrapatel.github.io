@@ -1,11 +1,23 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import ObsidianGraphBg from "../components/ObsidianGraphBg.tsx";
+import { PLATFORM_TOOLS } from "../lib/toolIcons";
 
 const base = import.meta.env.BASE_URL;
+
+/** Tool constellation only — posts stay on /posts, not as duplicate graph hubs. */
+const seeds = PLATFORM_TOOLS.map((tool) => ({
+  id: tool.id,
+  label: tool.label,
+  icon: tool.icon,
+  hub: false,
+  links: tool.links,
+}));
 ---
 
 <BaseLayout title="cloud-dispatch" path="/">
   <section class="hero">
+    <ObsidianGraphBg client:load seeds={seeds} />
     <div class="hero-inner">
       <h1 class="hero-brand">cloud-<em>dispatch</em></h1>
       <p class="hero-lead">

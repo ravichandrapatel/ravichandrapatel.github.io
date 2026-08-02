@@ -1,0 +1,27 @@
+.wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  opacity: 1;
+  /* Soft edge only — keep icons visible across most of the hero */
+  mask-image: radial-gradient(
+    ellipse 95% 90% at 55% 40%,
+    #000 55%,
+    rgba(0, 0, 0, 0.55) 78%,
+    transparent 100%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse 95% 90% at 55% 40%,
+    #000 55%,
+    rgba(0, 0, 0, 0.55) 78%,
+    transparent 100%
+  );
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

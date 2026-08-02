@@ -1,4 +1,19 @@
-User-agent: *
+User-agent: Googlebot
 Allow: /
+
+User-agent: Googlebot-Image
+Allow: /
+
+User-agent: Googlebot-News
+Allow: /
+
+User-agent: Googlebot-Video
+Allow: /
+
+User-agent: Google-InspectionTool
+Allow: /
+
+User-agent: *
+Disallow: /
 
 Sitemap: https://ravichandrapatel.github.io/sitemap-index.xml
