@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0b1016"/><stop offset="100%" stop-color="#121a24"/></linearGradient>
+    <pattern id="g" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="rgba(232,238,246,0.07)" stroke-width="1"/></pattern>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/><rect width="1600" height="900" fill="url(#g)"/>
+  <text x="160" y="130" font-family="ui-sans-serif,system-ui,sans-serif" font-size="26" font-weight="700" fill="#3ecf8e" letter-spacing="0.14em">CLOUD-DISPATCH</text>
+  <text x="160" y="200" font-family="ui-sans-serif,system-ui,sans-serif" font-size="34" fill="#9aabbf">Building an IDP on a Shoestring</text>
+  <text x="160" y="300" font-family="ui-sans-serif,system-ui,sans-serif" font-size="58" font-weight="800" fill="#e8eef6">Drift detection</text>
+  <text x="160" y="375" font-family="ui-sans-serif,system-ui,sans-serif" font-size="58" font-weight="800" fill="#e8eef6">without quiet destroys</text>
+  <rect x="160" y="450" width="620" height="340" rx="18" fill="#1a2533" stroke="rgba(232,238,246,0.25)" stroke-width="3"/>
+  <text x="200" y="515" font-family="ui-monospace,monospace" font-size="22" fill="#5b9fd4">DETECT</text>
+  <circle cx="220" cy="575" r="14" fill="#3ecf8e"/><text x="260" y="585" font-family="ui-sans-serif,system-ui,sans-serif" font-size="28" fill="#e8eef6">Workload cron + OIDC plan</text>
+  <circle cx="220" cy="640" r="14" fill="#3ecf8e"/><text x="260" y="650" font-family="ui-sans-serif,system-ui,sans-serif" font-size="28" fill="#e8eef6">Classify safe vs destroy</text>
+  <circle cx="220" cy="705" r="14" fill="#3ecf8e"/><text x="260" y="715" font-family="ui-sans-serif,system-ui,sans-serif" font-size="28" fill="#e8eef6">One Drift Report issue</text>
+  <circle cx="220" cy="770" r="14" fill="#3ecf8e"/><text x="260" y="780" font-family="ui-sans-serif,system-ui,sans-serif" font-size="28" fill="#e8eef6">Control never applies</text>
+  <rect x="840" y="450" width="600" height="340" rx="18" fill="#121a24" stroke="#3ecf8e" stroke-width="3"/>
+  <text x="880" y="515" font-family="ui-monospace,monospace" font-size="22" fill="#3ecf8e">SOLVE</text>
+  <text x="880" y="595" font-family="ui-sans-serif,system-ui,sans-serif" font-size="30" fill="#e8eef6">Dev: stamp PR ’ gated apply</text>
+  <text x="880" y="665" font-family="ui-sans-serif,system-ui,sans-serif" font-size="30" fill="#e8eef6">Prod: report only</text>
+  <text x="880" y="735" font-family="ui-sans-serif,system-ui,sans-serif" font-size="30" fill="#e8eef6">Destroy: human triage</text>
+  <text x="880" y="805" font-family="ui-sans-serif,system-ui,sans-serif" font-size="30" fill="#e8eef6">Conftest denies drift deletes</text>
+</svg>
