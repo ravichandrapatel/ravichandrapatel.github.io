@@ -12,13 +12,23 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-
-# environment variables
+# environment variables & secrets (never commit)
 .env
-.env.production
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.secret
+credentials.json
+.npmrc.local
 
-# macOS-specific files
+# macOS / IDE
 .DS_Store
-
-# jetbrains setting folder
 .idea/
+.vscode/
+*.swp
+*~

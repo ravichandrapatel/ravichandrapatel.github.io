@@ -1,0 +1,34 @@
+# FILE_NAME: dependabot.yml
+# DESCRIPTION: Weekly npm + Actions dependency updates for supply-chain hygiene.
+# VERSION: 0.1.0
+
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 10
+    groups:
+      production-deps:
+        dependency-type: production
+      dev-deps:
+        dependency-type: development
+    labels:
+      - dependencies
+      - npm
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - github-actions

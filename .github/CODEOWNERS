@@ -1,0 +1,7 @@
+# Default owner for all paths in this user site.
+* @ravichandrapatel
+
+# Workflows and supply-chain config always need explicit ownership.
+.github/ @ravichandrapatel
+package.json @ravichandrapatel
+package-lock.json @ravichandrapatel
