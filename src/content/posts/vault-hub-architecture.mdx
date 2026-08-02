@@ -1,6 +1,6 @@
 ---
 title: "Building a Multi-Tenant HashiCorp Vault OSS Hub Without Policy Sprawl"
-description: "Central HashiCorp Vault OSS hub with identity metadata and one shared policy — a Vault namespaces alternative without policy sprawl. Kind lab allow/deny proof, footguns, and production limits."
+description: "Central HashiCorp Vault OSS hub with identity metadata and one shared policy. A Vault namespaces alternative without policy sprawl. Kind lab allow/deny proof, footguns, and production limits."
 pubDate: 2026-08-04T13:30:00.000Z
 updatedDate: 2026-08-04T13:30:00.000Z
 tags: [vault, vault-oss, kubernetes, secrets, multi-tenant, metadata-policy, notes]
@@ -18,13 +18,13 @@ import vaultProdValues from "../snippets/vaultHubProdValues.ts";
 
 When you build an internal developer portal, you hit the same question sooner or later: where do the secrets live?
 
-I'm building a **central Vault Hub** for that portal — one Vault shared by the control plane and app teams, on **Vault OSS**, with tenant separation that doesn't need Enterprise namespaces. Simple test: can one app read only its own secrets, and get denied everywhere else, without me writing a new policy file for every app?
+I'm building a **central Vault Hub** for that portal. One Vault shared by the control plane and app teams, on **Vault OSS**, with tenant separation that doesn't need Enterprise namespaces. Simple test: can one app read only its own secrets, and get denied everywhere else, without me writing a new policy file for every app?
 
-I've used Vault Enterprise on projects for about five years, so I want that same way of working here. I don't have budget for an Enterprise license at this stage, so I'm on OSS. OSS doesn't have namespaces, native DR, or standbys that serve reads. Some of that I can fake. Some of it I can't. Fine — I still want the setup I'm used to running.
+I've used Vault Enterprise on projects for about five years, so I want that same way of working here. I don't have budget for an Enterprise license at this stage, so I'm on OSS. OSS doesn't have namespaces, native DR, or standbys that serve reads. Some of that I can fake. Some of it I can't. Fine. I still want the setup I'm used to running.
 
 Most guides skip how to avoid policy sprawl on OSS while keeping multi-tenant isolation. This note focuses on that gap.
 
-Let's take a company-style example and keep it for the rest of this note — lab, UI, and later when real clusters show up:
+Let's take a company-style example and keep it for the rest of this note: lab, UI, and later when real clusters show up:
 
 | Piece | Example |
 | --- | --- |
@@ -44,22 +44,22 @@ Rest of the note: what I decided, why I rejected the obvious alternatives, how I
 
 ### Decision (ADR-style)
 
-**Context.** Internal developer portal needs one secrets broker. Teams onboard apps often. I need isolation on Vault OSS — no Enterprise namespaces.
+**Context.** Internal developer portal needs one secrets broker. Teams onboard apps often. I need isolation on Vault OSS, without Enterprise namespaces.
 
 **Options I weighed.**
 
 | Option | Why I rejected it (for now) |
 | --- | --- |
 | Vault Enterprise namespaces | Right tool if I had budget. I don't. |
-| Path-only folders, no identity metadata | No metadata-driven ACLs; isolation relies purely on prefix discipline. Weak — one bad policy or prefix mistake and blast radius jumps. I still need metadata + one shared policy template, not bare folders. |
+| Path-only folders, no identity metadata | No metadata-driven ACLs; isolation relies purely on prefix discipline. Weak. One bad policy or prefix mistake and blast radius jumps. I still need metadata + one shared policy template, not bare folders. |
 | Vault per tenant / per BU | Multiplies seal, backup, upgrade, and KMS work. Portal control plane wants one broker. |
 | AWS Secrets Manager / Azure Key Vault only | Fine for cloud-native single-cloud apps. I want one pattern for K8s + VMs + portal jobs, not N vendor APIs. |
 | External Secrets / VSO alone | Sync layer, not the system of record. Still need a hub policy story underneath. |
-| One HCL file per app (`policy-finance-prod.hcl`, …) | Works until onboarding is a policy lifecycle. That's the sprawl I'm avoiding. |
+| One HCL file per app (`policy-finance-prod.hcl`, …) | Works until onboarding is a policy lifecycle. Exactly the sprawl I'm avoiding. |
 
 **Decision.** Central Vault Hub. Path layout + [Identity Entity](https://developer.hashicorp.com/vault/docs/concepts/identity) metadata + **one shared [policy](https://developer.hashicorp.com/vault/docs/concepts/policies) template**. Trust-domain auth mounts (`k8s-prod` / `k8s-nonprod` / `k8s-platform`), not one mount per cluster. Enterprise [namespaces](https://developer.hashicorp.com/vault/docs/enterprise/namespaces) stay out of scope until a license changes that.
 
-**Auth mounts (early).** One [Kubernetes auth](https://developer.hashicorp.com/vault/docs/auth/kubernetes) mount per trust domain (`k8s-prod` / `k8s-nonprod` / `k8s-platform`) — not per cluster. Roles bind `iss` (cluster issuer) and `sub` (namespace:SA) so only the right workloads can assume a Vault role. In practice, each Vault role maps to a specific combination of cluster, namespace, and service account — not to “any workload in prod.” That keeps mount count small and prefers platform-native identity over AppRole sprawl.
+Auth mounts early: one [Kubernetes auth](https://developer.hashicorp.com/vault/docs/auth/kubernetes) mount per trust domain (`k8s-prod` / `k8s-nonprod` / `k8s-platform`), not per cluster. Roles bind `iss` (cluster issuer) and `sub` (namespace:SA) so only the right workloads can assume a Vault role. In practice, each Vault role maps to a specific combination of cluster, namespace, and service account, not to “any workload in prod.” That keeps mount count small and prefers platform-native identity over AppRole sprawl.
 
 **Consequences.**
 
@@ -68,23 +68,23 @@ Rest of the note: what I decided, why I rejected the obvious alternatives, how I
 
 ### Why identity metadata wins
 
-Without metadata-driven policies, every new application becomes another policy lifecycle to own, review, version, and test. `policy-finance-prod.hcl`, `policy-retail-prod.hcl`, `policy-hr-prod.hcl` — then the same pile for every env. Identity metadata moves onboarding from writing HCL to assigning attributes. The ACL stays one template; the entity carries `ou` / `bu` / `app_name` / `env`.
+Without metadata-driven policies, every new application becomes another policy lifecycle to own, review, version, and test. `policy-finance-prod.hcl`, `policy-retail-prod.hcl`, `policy-hr-prod.hcl`, then the same pile for every env. Identity metadata moves onboarding from writing HCL to assigning attributes. The ACL stays one template; the entity carries `ou` / `bu` / `app_name` / `env`.
 
-That's the operational win: short-lived identity-based access, clear path ownership, and fewer policy objects to measure and review. Treat metadata like policy — PR review, lint it, version it in Terraform/state. A bad template or a wrong attribute can still create a cross-tenant leak.
+Short-lived identity-based access, clear path ownership, fewer policy objects to measure and review. Treat metadata like policy: PR review, lint it, version it in Terraform/state. A bad template or a wrong attribute can still create a cross-tenant leak.
 
 ### Shape of the hub
 
 For the portal I don't want a Vault per team. I need a **central Vault** where the control plane lives. App teams, other clusters, and VMs log into that same broker.
 
-I'm picking a **three-node** Vault for real environments (common minimum HA [Raft](https://developer.hashicorp.com/vault/docs/configuration/storage/raft) setup — odd quorum, same idea as etcd). Five later if things grow. On OSS, tenant separation is **path layout + policies**. Namespaces and native DR stay Enterprise — I'll say that straight.
+I'm picking a **three-node** Vault for real environments (common minimum HA [Raft](https://developer.hashicorp.com/vault/docs/configuration/storage/raft) setup, odd quorum, same idea as etcd). Five later if things grow. On OSS, tenant separation is **path layout + policies**. Namespaces and native DR stay Enterprise. I'll say that straight.
 
-![Multi-tenant HashiCorp Vault OSS hub architecture — clusters authenticate in, identity provider for humans, short-lived credentials out](/posts/vault-hub/architecture.png)
+![Multi-tenant HashiCorp Vault OSS hub architecture: clusters authenticate in, identity provider for humans, short-lived credentials out](/posts/vault-hub/architecture.png)
 
 Three rules for the rest of the design:
 
-1. **Identity first** — login lands on an Identity Entity with metadata.
-2. **Few policies** — one shared policy template driven by that metadata.
-3. **No static secrets in the apps** — short-lived machine auth, cloud KMS auto-unseal in real clusters, humans on OIDC.
+1. **Identity first.** Login lands on an Identity Entity with metadata.
+2. **Few policies.** One shared policy template driven by that metadata.
+3. **No static secrets in the apps.** Short-lived machine auth, cloud KMS auto-unseal in real clusters, humans on OIDC.
 
 For the company example above, the metadata on `payment-api` looks like this:
 
@@ -94,7 +94,7 @@ For the company example above, the metadata on `payment-api` looks like this:
 | `bu` | `finance` | business unit folder |
 | `app_name` | `payment-api` | application id |
 | `env` | `prod` | lifecycle |
-| `cluster` | `eks-cluster-101` | onboarding/audit only — not used in the shared HCL; prod binding is JWT `iss`/`sub` |
+| `cluster` | `eks-cluster-101` | onboarding/audit only; not used in the shared HCL; prod binding is JWT `iss`/`sub` |
 
 ```text
 {{ou}}-ou/data/{{bu}}/{{app_name}}/{{env}}/*
@@ -105,12 +105,12 @@ That becomes:
 - Allowed: `test1-ou/data/finance/payment-api/prod/...`
 - Denied for that same identity: `test1-ou/data/retail/oms/prod/...`
 
-**Naming:** mount/prefix `{ou}-ou`, then `{bu}/{app_name}/{env}` (plus `{bu}/shared/{env}`). Platform owns new OU/BU prefixes; app teams don't invent paths in PRs without that review.
+Mount and prefix naming is `{ou}-ou`, then `{bu}/{app_name}/{env}` (plus `{bu}/shared/{env}`). Platform owns new OU/BU prefixes; app teams don't invent paths in PRs without that review.
 
-One shared policy template for every app (one HCL object, many entities). You need the exact path **and** the `/*` path — `vault kv get` hits the exact path; nested keys need the wildcard. Skip Issues Encountered and you'll paste a 403 into prod. Metadata-driven policies still need careful review — a bad template is a cross-tenant leak or a silent 403 with nice syntax.
+One shared policy template for every app (one HCL object, many entities). You need the exact path **and** the `/*` path. `vault kv get` hits the exact path; nested keys need the wildcard. Skip Issues Encountered and you'll paste a 403 into prod. Metadata-driven policies still need careful review. A bad template is a cross-tenant leak or a silent 403 with nice syntax.
 
 ```hcl
-# Exact path — what `vault kv get .../prod` hits (without this: 403)
+# Exact path: what `vault kv get .../prod` hits (without this: 403)
 path "{{identity.entity.metadata.ou}}-ou/data/{{identity.entity.metadata.bu}}/{{identity.entity.metadata.app_name}}/{{identity.entity.metadata.env}}" {
   capabilities = ["read", "list"]
 }
@@ -125,53 +125,29 @@ path "{{identity.entity.metadata.ou}}-ou/data/{{identity.entity.metadata.bu}}/sh
 path "{{identity.entity.metadata.ou}}-ou/data/{{identity.entity.metadata.bu}}/shared/{{identity.entity.metadata.env}}/*" {
   capabilities = ["read", "list"]
 }
-# Self-lookup / debugging — not general app business logic
+# Self-lookup / debugging; not general app business logic
 path "identity/entity/id/{{identity.entity.id}}" {
   capabilities = ["read"]
 }
 ```
 
-`shared/` is BU-wide on purpose — not cross-tenant. Platform jobs that span BUs need their own entity/policy, not a wider universal template.
+`shared/` is BU-wide on purpose, not cross-tenant. Platform jobs that span BUs need their own entity/policy, not a wider universal template.
 
 Create the entity **with metadata before** the first login.
 
-Request path once auth works (the thing I want every reader to picture):
+Once auth works, the request path is straightforward: client or pod presents a Kubernetes JWT (or AppRole in the lab), Vault auth lands on an Identity Entity with metadata, the shared policy template expands, and the KV path either allows or returns 403.
 
-```text
-Client / pod
-    ↓  Kubernetes JWT (or AppRole in the lab)
-Vault auth
-    ↓
-Identity Entity + metadata
-    ↓
-Shared policy template
-    ↓
-KV path allow or 403
-```
-
-Toggle [Kubernetes auth](https://developer.hashicorp.com/vault/docs/auth/kubernetes) vs [AppRole](https://developer.hashicorp.com/vault/docs/auth/approle) below — watch where trust stops. Mount strategy is above under the decision.
+Toggle [Kubernetes auth](https://developer.hashicorp.com/vault/docs/auth/kubernetes) vs [AppRole](https://developer.hashicorp.com/vault/docs/auth/approle) below and watch where trust stops. Mount strategy is above under the decision.
 
 <VaultK8sAuthFlow client:load />
 
 Native Kubernetes / JWT is the cleaner story for real clusters. AppRole is what I used in the kind lab, because fake OIDC in kind wasn't worth it just to prove the policy.
 
-Outside the lab I want three-node Raft, two disks, TLS, an audit job, and a daily snapshot CronJob. Seal blocks stay commented until the cloud KMS ARNs are real. Click to open the full values file; leave it closed if you only care about the isolation proof. Treat join URLs, `storageClass`, and IAM ARNs as placeholders — match your TLS scheme (`https` when the listener is TLS) and real storage classes before you apply.
-
-```text
-Raft leader
-    ↓
-Follower    Follower
-    ↓
-Snapshots (+ audit)
-    ↓
-Cloud KMS unseal
-    ↓
-Restore drill (you must practice this)
-```
+Outside the lab I want three-node Raft, two disks, TLS, an audit job, and a daily snapshot CronJob. Seal blocks stay commented until the cloud KMS ARNs are real. Click to open the full values file; leave it closed if you only care about the isolation proof. Treat join URLs, `storageClass`, and IAM ARNs as placeholders. Match your TLS scheme (`https` when the listener is TLS) and real storage classes before you apply. Followers join a Raft leader; snapshots and audit ride alongside; cloud KMS unseal is a hard dependency; restore drills are something you practice, not something you invent during an outage.
 
 <ExpandCode
   client:load
-  title="values.yaml — production Vault Helm values"
+  title="values.yaml: production Vault Helm values"
   code={vaultProdValues}
   language="yaml"
   hint="Click to expand"
@@ -181,7 +157,7 @@ I did **not** use that file for the kind proof. Lab values stay small and throwa
 
 ## 3. Execution and Validation
 
-To prove the company example, I stood up Vault on kind, wrote a secret under **finance / payment-api / prod**, set identity metadata for that app, checked the read, then checked that **retail / oms** returns 403. Dev mode uses `inmem` storage and **no HA** — it is not Raft behavior. Fast path proof only.
+To prove the company example, I stood up Vault on kind, wrote a secret under **finance / payment-api / prod**, set identity metadata for that app, checked the read, then checked that **retail / oms** returns 403. Dev mode uses `inmem` storage and **no HA**. It is not Raft behavior. Fast path proof only.
 
 Commands below. I cut the boring success spam. Kept the outputs that matter for the proof.
 
@@ -198,7 +174,7 @@ kubectl config use-context kind-vault-blog
 
 ### Helm install (lab values)
 
-Small values — `dev` mode, root token, UI on. Not the production file. Goal here is a Vault that answers, not a Raft quorum.
+Small values: `dev` mode, root token, UI on. Not the production file. Goal here is a Vault that answers, not a Raft quorum.
 
 ```bash
 helm repo add hashicorp https://helm.releases.hashicorp.com
@@ -223,7 +199,7 @@ ui:
   enabled: true
 EOF
 
-# Chart 0.29.0 ↔ app 1.17.x — pin both so the lab stays reproducible across runs and machines
+# Chart 0.29.0 ↔ app 1.17.x: pin both so the lab stays reproducible across runs and machines
 helm upgrade --install vault hashicorp/vault \
   --version 0.29.0 \
   -n vault \
@@ -234,13 +210,13 @@ kubectl -n vault get pods,svc
 kubectl -n vault exec vault-0 -- vault status
 ```
 
-On `vault status` you want: `Initialized true`, `Sealed false`, `Storage Type inmem`, `HA Enabled false`. That last pair is normal in **dev** mode — again, not a Raft stand-in.
+On `vault status` you want: `Initialized true`, `Sealed false`, `Storage Type inmem`, `HA Enabled false`. That last pair is normal in **dev** mode. Again, not a Raft stand-in.
 
 ![kind cluster Vault pods and vault status showing dev mode inmem storage](/posts/vault-hub/kind-vault-pods.png)
 
 ### Vault UI
 
-Optional — port-forward and sign in with Method **Token** / `root` (lab only) at [http://127.0.0.1:8200/ui/](http://127.0.0.1:8200/ui/) if you want to click through mounts while the CLI runs the proof.
+Optional. Port-forward and sign in with Method **Token** / `root` (lab only) at [http://127.0.0.1:8200/ui/](http://127.0.0.1:8200/ui/) if you want to click through mounts while the CLI runs the proof.
 
 ```bash
 kubectl -n vault port-forward svc/vault-ui 8200:8200
@@ -252,7 +228,7 @@ kubectl -n vault port-forward svc/vault-ui 8200:8200
 
 ### KV, policy, entity, AppRole proof
 
-Same company example: mount `test1-ou/`, write the finance secret (and a shared finance secret), set `payment-api`, then try `retail` / `oms`. I don't even need to create the retail secret — deny is enough.
+Same company example: mount `test1-ou/`, write the finance secret (and a shared finance secret), set `payment-api`, then try `retail` / `oms`. I don't even need to create the retail secret. Deny is enough.
 
 Mount and seed data first.
 
@@ -266,31 +242,31 @@ vault kv put test1-ou/finance/shared/prod api_key=shared-demo
 vault secrets list
 ```
 
-[KV secrets engine (version 2)](https://developer.hashicorp.com/vault/docs/secrets/kv/kv-v2) under `test1-ou/`. UI check — **Secrets → Secrets engines** shows the mount; open it and you see `finance/`.
+[KV secrets engine (version 2)](https://developer.hashicorp.com/vault/docs/secrets/kv/kv-v2) under `test1-ou/`. UI check: **Secrets → Secrets engines** shows the mount; open it and you see `finance/`.
 
 ![Vault UI secrets engines list showing the test1-ou KV v2 mount](/posts/vault-hub/vault-ui-secrets.png)
 
 ![Vault UI browsing test1-ou KV mount with finance business-unit folder](/posts/vault-hub/vault-ui-test1-ou.png)
 
-Now the shared policy and the entity. Metadata before login — that order matters (see Issues).
+Now the shared policy and the entity. Metadata before login. That order matters (see Issues).
 
 ```bash
 cat > /tmp/universal.hcl <<'EOF'
-# Exact path — what `vault kv get .../prod` hits (without this: 403)
+# Exact path: what `vault kv get .../prod` hits (without this: 403)
 path "{{identity.entity.metadata.ou}}-ou/data/{{identity.entity.metadata.bu}}/{{identity.entity.metadata.app_name}}/{{identity.entity.metadata.env}}" {
   capabilities = ["read", "list"]
 }
 path "{{identity.entity.metadata.ou}}-ou/data/{{identity.entity.metadata.bu}}/{{identity.entity.metadata.app_name}}/{{identity.entity.metadata.env}}/*" {
   capabilities = ["read", "list"]
 }
-# BU-wide shared/ — every app in that BU can read it (not cross-tenant)
+# BU-wide shared/: every app in that BU can read it (not cross-tenant)
 path "{{identity.entity.metadata.ou}}-ou/data/{{identity.entity.metadata.bu}}/shared/{{identity.entity.metadata.env}}" {
   capabilities = ["read", "list"]
 }
 path "{{identity.entity.metadata.ou}}-ou/data/{{identity.entity.metadata.bu}}/shared/{{identity.entity.metadata.env}}/*" {
   capabilities = ["read", "list"]
 }
-# Self-lookup / debugging — not general app business logic
+# Self-lookup / debugging; not general app business logic
 path "identity/entity/id/{{identity.entity.id}}" {
   capabilities = ["read"]
 }
@@ -305,7 +281,7 @@ vault write identity/entity name="payment-api-prod" \
   metadata=env=prod
 ```
 
-Entity create (keep this `id` — you need it for the alias):
+Entity create (keep this `id`. You need it for the alias):
 
 ```text
 Key        Value
@@ -364,7 +340,7 @@ Key            Value
 db_password    s3cret-demo
 ```
 
-Cross-tenant check — same token, wrong BU/app:
+Cross-tenant check. Same token, wrong BU/app:
 
 ```bash
 VAULT_TOKEN=$TOKEN vault kv get test1-ou/retail/oms/prod
@@ -380,7 +356,7 @@ Code: 403. Errors:
 	* permission denied
 ```
 
-![Vault allow and deny validation — payment-api reads own path, retail oms returns 403](/posts/vault-hub/allow-deny.png)
+![Vault allow and deny validation: payment-api reads own path, retail oms returns 403](/posts/vault-hub/allow-deny.png)
 
 ### Teardown
 
@@ -390,21 +366,37 @@ kind delete cluster --name vault-blog
 
 ## 4. Issues Encountered
 
-**Exact path vs `/*`.** A policy that only ends in `.../{{env}}/*` covers things *under* `.../prod/`. The exact path `.../prod` (what `vault kv get` hits) came back **403**. Reads on `.../prod/db_password` were fine. **Fix:** also grant the exact path (or put a trailing `*` on it). That's why the shared policy has both lines.
+### Exact path vs `/*`
 
-**Bootstrap order.** If the app logs in before the Identity Entity has metadata, you get a ghost entity and later “alias already exists” fights with Terraform. **Fix:** create entity + metadata + alias *before* the first login.
+A policy that only ends in `.../{{env}}/*` covers things *under* `.../prod/`. The exact path `.../prod` (what `vault kv get` hits) came back **403**. Reads on `.../prod/db_password` were fine. Fix: also grant the exact path (or put a trailing `*` on it). The shared policy has both lines for that reason.
 
-**Alias + mount_accessor.** Store both in Terraform state. Recreating an auth mount changes the accessor; aliases break until you rebuild them. If you recreate a mount, update the accessor in state and re-link aliases before rotating tokens. Don't recreate mounts casually.
+### Bootstrap order
 
-**Dev mode ≠ prod.** `inmem`, no HA, and some audit/seal behaviors differ. In particular, Raft quorum, leader election, and some audit behaviors don't exist in dev mode. Footguns here still matter, but don't treat this lab as a full prod repro.
+If the app logs in before the Identity Entity has metadata, you get a ghost entity and later “alias already exists” fights with Terraform. Fix: create entity + metadata + alias *before* the first login.
 
-**Root token in the UI.** Fine for kind. The UI itself warns that the root token isn't stored in the browser. Don't do this on a shared cluster.
+### Alias + mount_accessor
 
-**Docker socket on WSL.** `kind create` failed until `DOCKER_HOST=unix:///var/run/docker.sock` pointed at the real Docker engine instead of a broken containerd endpoint.
+Store both in Terraform state. Recreating an auth mount changes the accessor; aliases break until you rebuild them. If you recreate a mount, update the accessor in state and re-link aliases before rotating tokens. Don't recreate mounts casually.
 
-**Port-forward flakiness.** CLI against `127.0.0.1:8200` died when the forward dropped. Running `vault` via `kubectl -n vault exec vault-0 -- ...` was more solid for the lab script.
+### Dev mode ≠ prod
 
-**OSS feature honesty.** I kept writing as if namespaces or warm-standby DR existed. They don't on OSS. Path + policy is the tenant story until a license changes that.
+`inmem`, no HA, and some audit/seal behaviors differ. In particular, Raft quorum, leader election, and some audit behaviors don't exist in dev mode. Footguns here still matter, but don't treat this lab as a full prod repro.
+
+### Root token in the UI
+
+Fine for kind. The UI itself warns that the root token isn't stored in the browser. Don't do this on a shared cluster.
+
+### Docker socket on WSL
+
+`kind create` failed until `DOCKER_HOST=unix:///var/run/docker.sock` pointed at the real Docker engine instead of a broken containerd endpoint.
+
+### Port-forward flakiness
+
+CLI against `127.0.0.1:8200` died when the forward dropped. Running `vault` via `kubectl -n vault exec vault-0 -- ...` was more solid for the lab script.
+
+### OSS feature honesty
+
+I kept writing as if namespaces or warm-standby DR existed. They don't on OSS. Path + policy is the tenant story until a license changes that.
 
 ## 5. Production questions the lab doesn't answer
 
@@ -414,25 +406,9 @@ Kind proved isolation. It did **not** prove ops. These are the questions I'd wan
 
 ### Threat model (short)
 
-What I'm trying to stop, in order of how often I worry about it:
+What I'm trying to stop, in the order I usually worry about it: compromised pod / stolen SA JWT; stolen AppRole SecretID (lab pattern; don't leave this as the prod story); compromised CI/CD (pipeline holding long-lived Vault tokens or static creds); wrong or malicious identity metadata at onboarding; misconfigured shared policy (exact-path bug, overly broad template); malicious insider with auth-admin rights; compromised control plane / Vault hosts.
 
-```text
-Compromised pod / stolen SA JWT
-    ↓
-Stolen AppRole SecretID (lab pattern — don't leave this as the prod story)
-    ↓
-Compromised CI/CD (pipeline holding long-lived Vault tokens or static creds)
-    ↓
-Wrong or malicious identity metadata at onboarding
-    ↓
-Misconfigured shared policy (exact-path bug, overly broad template)
-    ↓
-Malicious insider with auth-admin rights
-    ↓
-Compromised control plane / Vault hosts
-```
-
-Kubernetes JWT + tight `iss`/`sub` bindings shrink the first two. Short-lived CI tokens (or JWT auth for pipelines) shrink the CI case. Metadata reviews and least-priv admin tokens shrink the middle. Host/KMS controls own the bottom. I have not published a full formal threat model here — this is the checklist I actually use when reviewing PRs against the hub.
+Kubernetes JWT + tight `iss`/`sub` bindings shrink the first two. Short-lived CI tokens (or JWT auth for pipelines) shrink the CI case. Metadata reviews and least-priv admin tokens shrink the middle. Host/KMS controls own the bottom. I have not published a full formal threat model here. This is the checklist I actually use when reviewing PRs against the hub.
 
 ### Blast radius
 
@@ -442,16 +418,16 @@ Kubernetes JWT + tight `iss`/`sub` bindings shrink the first two. Short-lived CI
 | Raft loses quorum | Writes stop; cluster unhealthy | Keep odd voter count; replace failed nodes from runbook; restore from snapshot if the log is toast |
 | Cloud KMS unavailable | Auto-unseal / re-unseal fails after restart | Treat KMS as a hard dependency; dual-region KMS only if the cloud story supports it |
 | Misconfigured shared policy / metadata bug | Cross-tenant secret access (or surprising 403s) | Roll back policy/metadata PR; rotate affected secrets; grep audit logs |
-| Root token lost / burned | Admin path depends on recovery keys + break-glass | Root used once at init, then discarded; recovery keys in a real escrow — not a wiki page |
+| Root token lost / burned | Admin path depends on recovery keys + break-glass | Root used once at init, then discarded; recovery keys in a real escrow, not a wiki page |
 
 ### Ops I still owe myself
 
-Snapshots, audit, TLS show up in the values file. That's config, not a runbook.
+Snapshots, audit, TLS show up in the values file. Config, not a runbook.
 
 I still need, written down and practiced:
 
 - How often snapshots run, where they land, who verifies the last good copy
-- Restore steps on a throwaway Raft (I've called this out as next work — I have **not** finished a restore drill for this hub yet)
+- Restore steps on a throwaway Raft (I've called this out as next work. I have **not** finished a restore drill for this hub yet)
 - Upgrade order (followers then leader; chart/app version pins)
 - Policy-as-code review gates and metadata linting in CI
 - Token TTLs / renewal for workloads; KV rotation ownership per app
@@ -460,7 +436,7 @@ I still need, written down and practiced:
 - Recovery key storage and unseal/recovery governance
 - Break-glass: who can mint a temporary admin path when SSO is down
 
-Until those exist, the Hub is an architecture with a lab proof — not a finished production service.
+Until those exist, the Hub is an architecture with a lab proof, not a finished production service.
 
 ### Performance (honest)
 
@@ -474,41 +450,41 @@ What I'd watch first when I do: auth login latency, Raft apply latency, and whet
 | --- | --- |
 | ~50 tenants | Metadata + path layout still fine; watch entity/alias sprawl in Terraform state |
 | ~200 tenants | Same policy template; invest in onboarding automation and metadata linting |
-| ~1000 tenants | Revisit mount strategy, Raft size (maybe five nodes). At this scale Enterprise namespaces often cost less in ops than path+policy review complexity — for teams that can afford the license and want stronger logical isolation |
-| Tenant rename / path change | Treat as migration: dual-write or freeze, update metadata, move KV, retire old path — don't "edit in place" quietly |
+| ~1000 tenants | Revisit mount strategy, Raft size (maybe five nodes). At this scale Enterprise namespaces often cost less in ops than path+policy review complexity, for teams that can afford the license and want stronger logical isolation |
+| Tenant rename / path change | Treat as migration: dual-write or freeze, update metadata, move KV, retire old path. Don't "edit in place" quietly |
 | Two BUs merge | New shared paths + metadata rewrite; secrets don't magically follow org charts |
-| App needs another app's secrets | Explicit grant or BU `shared/` — not widening the universal template |
+| App needs another app's secrets | Explicit grant or BU `shared/`, not widening the universal template |
 | Platform service across BUs | Separate entity/policies for platform roles; don't overload `payment-api`'s metadata to fake cross-tenant admin |
 
-**AppRole SecretID leaks?** Rotate SecretID, revoke tokens, prefer K8s JWT in prod so SecretID isn't the long-lived thing.
+If an AppRole SecretID leaks: Rotate SecretID, revoke tokens, prefer K8s JWT in prod so SecretID isn't the long-lived thing.
 
-**Metadata wrong?** Fix entity metadata; token may need re-login. Bad metadata is an ACL bug with a friendly face — review onboarding diffs like policy diffs.
+If metadata is wrong: Fix entity metadata; token may need re-login. Bad metadata is an ACL bug with a friendly face, so review onboarding diffs like policy diffs.
 
-**Alias deleted / auth mount recreated?** Access breaks until alias + mount accessor are rebuilt. Store accessors in state; don't recreate auth mounts casually.
+If an alias is deleted or an auth mount is recreated: Access breaks until alias + mount accessor are rebuilt. Store accessors in state; don't recreate auth mounts casually.
 
 ### Why this architecture holds up in production (for me)
 
-- **One Vault instead of many** — portal and spoke clusters share one seal/backup/upgrade surface. Cost is shared fate; I accept that with snapshots and drills.
-- **Metadata over policy-per-app** — onboarding stays an attribute change. Sprawl was the problem that started this note.
-- **Operational limits** — OSS: no namespaces, no native DR, standbys don't serve reads. Hub outage is everyone's outage. Wrong metadata is silent until a 403 or a worse allow.
-- **When I'd switch to Enterprise** — real namespace ops needs, DR product requirements, or scale where path+policy review cost exceeds license cost.
-- **Assumptions that must stay true** — entities created before first login; shared policy keeps exact + `/*`; prod auth is JWT-bound, not casual AppRole; root isn't a day-2 tool; restore has been practiced.
+One Vault instead of many means the portal and spoke clusters share one seal/backup/upgrade surface. Shared fate is the cost; I accept that with snapshots and drills. Metadata over policy-per-app keeps onboarding an attribute change, which was the problem that started this note.
+
+Operational limits stay real on OSS: no namespaces, no native DR, standbys don't serve reads. Hub outage is everyone's outage. Wrong metadata is silent until a 403 or a worse allow. I'd switch to Enterprise when namespace ops, native DR, or scale make path+policy review cost more than the license.
+
+Assumptions that have to stay true: entities created before first login; shared policy keeps exact + `/*`; prod auth is JWT-bound, not casual AppRole; root isn't a day-2 tool; restore has been practiced.
 
 ## 6. Pros and Cons
 
 | | Pros | Cons |
 | --- | --- | --- |
-| **Central Vault Hub** | One place to seal, backup, and upgrade; teams share one broker | Hub is a shared dependency — plan snapshots and restore |
+| **Central Vault Hub** | One place to seal, backup, and upgrade; teams share one broker | Hub is a shared dependency. Plan snapshots and restore |
 | **OSS + path tenants** | No Enterprise license to start; metadata-based isolation works | No namespaces; no native DR; OSS standbys don't serve reads |
 | **One shared policy** | No pile of per-app policy files; onboarding is metadata + alias | Easy to miss the exact-path bug; create order matters |
 | **Trust-domain auth mounts** | Few mounts (`k8s-prod` / `nonprod` / `platform`) | Role design must bind `iss`/`sub` carefully |
-| **kind + Helm dev mode** | Fast allow/deny and UI proof | `inmem`, no HA — don't confuse with the Raft values above |
+| **kind + Helm dev mode** | Fast allow/deny and UI proof | `inmem`, no HA. Don't confuse with the Raft values above |
 | **AppRole in the lab** | Easy without cluster OIDC | Weaker than native K8s JWT for real workloads |
 
 ## 7. FAQ
 
 **Can Vault OSS support multi-tenancy?**  
-Yes — via path layout + policies (and identity metadata), not Enterprise namespaces. That's the whole point of this note.
+Yes, via path layout + policies (and identity metadata), not Enterprise namespaces.
 
 **Why not use Enterprise namespaces?**  
 They're the right product feature if you have a license. I don't have budget for one at this stage, so I'm proving an OSS isolation pattern I can operate.
@@ -517,7 +493,7 @@ They're the right product feature if you have a license. I don't have budget for
 Not as the primary story. I used AppRole to prove the policy on kind. Real clusters should use Kubernetes / JWT auth with tight `iss`/`sub` binds.
 
 **When should I choose Enterprise?**  
-When namespace ops, native DR, or scale make path+policy review cost more than the license — see §5.
+When namespace ops, native DR, or scale make path+policy review cost more than the license ,  see §5.
 
 **Why use Identity Entity metadata?**  
 So onboarding is attributes + alias, not a new HCL file per app. Same shared policy; different metadata → different ACL.
@@ -527,13 +503,13 @@ It can work with strict policy review and metadata governance, but Enterprise na
 
 ## 8. Conclusions
 
-What I set out to build is a **Vault Hub for my internal developer portal**: one OSS broker, tenants split by metadata, one shared policy. I'll keep using the same company example — `finance` / `payment-api` allowed, `retail` / `oms` denied — when I move from kind to Raft and when I swap AppRole for real Kubernetes JWT auth.
+What I set out to build is a **Vault Hub for my internal developer portal**: one OSS broker, tenants split by metadata, one shared policy. I'll keep using the same company example ,  `finance` / `payment-api` allowed, `retail` / `oms` denied ,  when I move from kind to Raft and when I swap AppRole for real Kubernetes JWT auth.
 
-I'm sticking with that Hub model and a **three-node Raft** shape for anything past the lab. Kind + Helm **dev** mode was enough to prove allow and deny, and to walk the UI. The production values above are next — TLS, two disks, audit job, snapshot CronJob — once cloud KMS unseal and real storage classes are wired. And a restore I've actually run.
+I'm sticking with that Hub model and a **three-node Raft** shape for anything past the lab. Kind + Helm **dev** mode was enough to prove allow and deny, and to walk the UI. The production values above are next ,  TLS, two disks, audit job, snapshot CronJob ,  once cloud KMS unseal and real storage classes are wired. And a restore I've actually run.
 
-Policy sprawl was the research gap that started this. The lab answered the isolation question without a pile of `app-env.hcl` files. Production is the ops questions in §5 — threat, blast radius, runbook, and the awkward tenant changes. Those are the difference between a solid field note and a hub I'd trust with other people's secrets.
+Policy sprawl was the research gap that started this. The lab answered the isolation question without a pile of `app-env.hcl` files. Production is the ops questions in §5 ,  threat, blast radius, runbook, and the awkward tenant changes. Those are the difference between a solid field note and a hub I'd trust with other people's secrets.
 
-Next for me: trust-domain JWT against a real spoke OIDC issuer (still as `payment-api`), [External Secrets Operator](https://external-secrets.io/) / [Vault Secrets Operator](https://developer.hashicorp.com/vault/docs/platform/k8s/vso) on the shared path, one Raft snapshot restore I've actually practiced, and a first benchmark — auth login latency and Raft apply latency with a handful of apps across a couple of trust-domain mounts — so this stops being “architecture with a lab proof” and starts looking like a measured service.
+Next for me: trust-domain JWT against a real spoke OIDC issuer (still as `payment-api`), [External Secrets Operator](https://external-secrets.io/) / [Vault Secrets Operator](https://developer.hashicorp.com/vault/docs/platform/k8s/vso) on the shared path, one Raft snapshot restore I've actually practiced, and a first benchmark ,  auth login latency and Raft apply latency with a handful of apps across a couple of trust-domain mounts ,  so this stops being “architecture with a lab proof” and starts looking like a measured service.
 
 ### Related reading
 
