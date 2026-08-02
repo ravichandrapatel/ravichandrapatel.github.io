@@ -33,7 +33,13 @@ Out of scope:
 
 ## Hardening notes (operators)
 
-- Pages deploys only via GitHub Actions (`build_type: workflow`)
-- Third-party Actions are SHA-pinned; Dependabot keeps pins current
+- Pages deploys only via GitHub Actions (`build_type: workflow`); HTTPS enforced
+- Repo Actions allowlist: GitHub-owned + verified Marketplace only
+- Workflows in this repo pin Actions to full commit SHAs (Dependabot bumps them)
+- Repo-wide “require SHA pinning” is off on purpose: `upload-pages-artifact` nests
+  `upload-artifact@v4` by tag, which breaks Pages if the repo mandate is on
+- `main` ruleset: no force-push, no deletion, PR + CODEOWNERS + required `build` check
+  (repository admins may bypass for emergencies)
+- Dependabot version + security updates enabled; CodeQL on push/PR/weekly
 - Production builds omit `draft` and future-dated posts
 - No cloud credentials belong in this repository
