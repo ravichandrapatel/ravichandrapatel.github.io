@@ -9,20 +9,27 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "sync:policies": "bash scripts/sync-policies.sh",
+    "build:wasm": "bash scripts/build-wasm.sh"
   },
   "dependencies": {
     "@astrojs/mdx": "^7.0.5",
     "@astrojs/react": "^6.0.2",
     "@astrojs/sitemap": "^3.7.3",
+    "@open-policy-agent/opa-wasm": "^1.10.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "astro": "^7.1.6",
     "framer-motion": "^12.43.0",
+    "js-yaml": "^5.2.3",
     "lucide-react": "^1.28.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9"
   }
 }

@@ -18,6 +18,19 @@ npm ci
 npm run dev
 ```
 
+### SPVS pipeline checker (OPA WASM)
+
+In-browser OWASP SPVS / CKV checker at `/spvs-checker/`. Policies are vendored in
+`policy-src/github_actions/` (from `gha-reusable-actions-workflows`). Rebuild the
+static `public/policy.wasm` when Rego changes — requires the
+[OPA CLI](https://www.openpolicyagent.org/docs/latest/#running-opa) locally
+(not needed at runtime on GitHub Pages):
+
+```bash
+./scripts/sync-policies.sh   # optional refresh from sibling checkout
+./scripts/build-wasm.sh      # → public/policy.wasm
+```
+
 ## Write a post
 
 Add Markdown or MDX under `src/content/posts/`. Voice: human, specific, no fluff.

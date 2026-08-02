@@ -1,0 +1,252 @@
+.panel {
+  margin: 1.75rem 0 0;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg-2) 55%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.75rem;
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg-1) 70%, transparent);
+}
+
+.meta {
+  margin-right: auto;
+  color: var(--ink-dim);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.kind {
+  color: var(--accent-2);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.15rem;
+  padding: 0.45rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  background: var(--btn-bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btnPrimary {
+  background: var(--btn-primary-bg);
+  border-color: var(--btn-primary-border);
+}
+
+.btn:focus-visible,
+.textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.editor {
+  padding: 0.75rem 0.9rem 0.9rem;
+}
+
+.textarea {
+  display: block;
+  width: 100%;
+  min-height: 18rem;
+  resize: vertical;
+  margin: 0;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 0.3rem;
+  background: var(--bg-0);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.textarea::placeholder {
+  color: color-mix(in srgb, var(--ink-dim) 80%, transparent);
+}
+
+.results {
+  border-top: 1px solid var(--line);
+  padding: 0.9rem;
+}
+
+.statusOk,
+.statusErr,
+.statusIdle {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-left: 3px solid var(--line);
+}
+
+.statusOk {
+  border-left-color: var(--accent);
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.statusErr {
+  border-left-color: #e06c75;
+  color: var(--ink);
+  background: color-mix(in srgb, #e06c75 12%, transparent);
+}
+
+.statusIdle {
+  color: var(--ink-dim);
+}
+
+.group {
+  margin: 0 0 1rem;
+}
+
+.group:last-child {
+  margin-bottom: 0;
+}
+
+.groupTitle {
+  margin: 0 0 0.45rem;
+  color: var(--ink-dim);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.finding {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg-0) 70%, transparent);
+}
+
+.findingHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.55rem;
+}
+
+.id {
+  display: inline-block;
+  color: var(--accent);
+  font-weight: 500;
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.id:hover {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.id:focus-visible,
+.spvsRef:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.spvsRef {
+  display: inline-block;
+  color: var(--accent-2);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  border-bottom: 1px dotted color-mix(in srgb, var(--accent-2) 55%, transparent);
+}
+
+.spvsRef:hover {
+  color: var(--ink);
+}
+
+.field {
+  display: inline-block;
+  color: var(--accent-2);
+}
+
+.field::before {
+  content: "[";
+}
+
+.field::after {
+  content: "]";
+}
+
+.desc {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 640px) {
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .meta {
+    margin-right: 0;
+  }
+
+  .actions {
+    width: 100%;
+  }
+
+  .btn {
+    flex: 1;
+  }
+
+  .textarea {
+    min-height: 14rem;
+  }
+}

@@ -1,0 +1,57 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import PolicyChecker from "../components/PolicyChecker.tsx";
+---
+
+<BaseLayout
+  title="SPVS pipeline checker"
+  description="Paste a GitHub Actions workflow or composite action YAML and evaluate OWASP SPVS / CKV policies entirely in your browser — nothing is uploaded."
+  path="/spvs-checker/"
+>
+  <article class="prose">
+    <h1>SPVS pipeline checker</h1>
+    <p class="meta">OWASP SPVS · GitHub Actions · client-side OPA</p>
+
+    <p>
+      <strong>Evaluation runs entirely in your browser.</strong> The YAML you paste
+      is parsed and checked against a local WebAssembly policy bundle. Nothing is
+      sent to a server, API, or analytics endpoint when you click Run check — only
+      the static <code>policy.wasm</code> asset is fetched once on page load.
+    </p>
+
+    <p>
+      Controls come from custom Conftest/OPA policies aligned with the
+      <a
+        href="https://owasp.org/www-project-secure-pipeline-verification-standard/"
+        rel="noopener noreferrer"
+        >OWASP Secure Pipeline Verification Standard (SPVS)</a
+      >
+      (Plan → Develop → Integrate → Release → Operate), plus related CKV GitHub
+      Actions checks.
+    </p>
+
+    <p>
+      Paste a workflow (<code>on</code> / <code>jobs</code>) or a composite
+      <code>action.yml</code> (<code>runs.using: composite</code>). Both
+      <code>workflow/deny</code> and <code>composite/deny</code> entrypoints are
+      evaluated; findings are plain deny strings (<code>CHECK_ID [field]: …</code>).
+      Display IDs (e.g.
+      <code>SPVS_15</code>). Each control links to the closest official SPVS
+      requirement in the
+      <a
+        href="https://github.com/OWASP/www-project-spvs/blob/main/1.5/OWASP_SPVS_1.0_-en_Requirements.csv"
+        rel="noopener noreferrer"
+        >SPVS 1.5 requirements</a
+      >
+      (custom policy IDs are aligned to SPVS themes, not an official OWASP numbering).
+    </p>
+
+    <PolicyChecker client:load />
+
+    <p>
+      Policies are vendored under <code>policy-src/github_actions/</code>. After
+      upstream changes, rebuild with the OPA CLI (build-time only):
+      <code>./scripts/sync-policies.sh && ./scripts/build-wasm.sh</code>.
+    </p>
+  </article>
+</BaseLayout>
