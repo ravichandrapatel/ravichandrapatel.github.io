@@ -8,9 +8,11 @@ interface Props {
   cover?: string;
 }
 
+const SITE_AUTHOR = "Ravichandra Patel";
+
 const {
   title,
-  description = "AWS · Azure · GCP · Linux · DevOps — field notes by Ravichandra.",
+  description = "AWS · Azure · GCP · Linux · DevOps — field notes by Ravichandra Patel.",
   path = "/",
   cover,
 } = Astro.props;
@@ -20,7 +22,32 @@ const canonical = new URL(path.replace(/^\//, ""), Astro.site);
 const pageTitle = title === "cloud-dispatch" ? title : `${title} · cloud-dispatch`;
 const coverHref = cover
   ? new URL(cover.replace(/^\//, ""), Astro.site).href
-  : undefined;
+  : new URL("logo.png", Astro.site).href;
+const logoHref = new URL("logo.png", Astro.site).href;
+const isPost = path.startsWith("/posts/") && path !== "/posts/";
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": isPost ? "BlogPosting" : "WebPage",
+  headline: title,
+  description,
+  url: canonical.href,
+  author: {
+    "@type": "Person",
+    name: SITE_AUTHOR,
+    url: "https://github.com/ravichandrapatel",
+  },
+  publisher: {
+    "@type": "Organization",
+    name: "cloud-dispatch",
+    url: "https://ravichandrapatel.github.io/",
+    logo: {
+      "@type": "ImageObject",
+      url: logoHref,
+    },
+  },
+  image: coverHref,
+};
 ---
 
 <!doctype html>
@@ -29,18 +56,23 @@ const coverHref = cover
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="generator" content={Astro.generator} />
-    <meta name="author" content="Ravichandra" />
+    <meta name="author" content={SITE_AUTHOR} />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta name="description" content={description} />
+    <meta property="og:site_name" content="cloud-dispatch" />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical.href} />
+    <meta property="og:type" content={isPost ? "article" : "website"} />
+    <meta property="og:image" content={coverHref} />
+    <meta property="article:author" content={SITE_AUTHOR} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={pageTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={coverHref} />
     <link rel="canonical" href={canonical} />
     <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
-    {coverHref && (
-      <>
-        <meta property="og:image" content={coverHref} />
-        <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:image" content={coverHref} />
-      </>
-    )}
+    <link rel="apple-touch-icon" href={`${base}apple-touch-icon.png`} />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -48,11 +80,22 @@ const coverHref = cover
       rel="stylesheet"
     />
     <title>{pageTitle}</title>
+    <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
   </head>
   <body>
     <div class="site-shell">
       <header class="site-header">
-        <a class="brand" href={base}>cloud-<span>dispatch</span></a>
+        <a class="brand" href={base}>
+          <img
+            class="brand-mark"
+            src={`${base}favicon.svg`}
+            width="28"
+            height="28"
+            alt=""
+            decoding="async"
+          />
+          <span class="brand-text">cloud-<em>dispatch</em></span>
+        </a>
         <nav class="nav" aria-label="Primary">
           <a href={base} aria-current={path === "/" ? "page" : undefined}>Home</a>
           <a href={`${base}posts/`} aria-current={path.startsWith("/posts") ? "page" : undefined}
@@ -68,8 +111,8 @@ const coverHref = cover
       </main>
       <footer class="site-footer">
         <p>
-          © {new Date().getFullYear()} Ravichandra ·
-          <a href="https://github.com/ravichandrapatel/cloud-dispatch">source</a>
+          © {new Date().getFullYear()} {SITE_AUTHOR} ·
+          <a href="https://github.com/ravichandrapatel/ravichandrapatel.github.io">source</a>
         </p>
       </footer>
     </div>
