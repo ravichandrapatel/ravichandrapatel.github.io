@@ -6,10 +6,14 @@ const posts = defineCollection({
   schema: z.object({
     title: z.string(),
     description: z.string(),
+    /** Publish instant (ISO). Future dates stay out of production builds until cron deploy. */
     pubDate: z.coerce.date(),
     updatedDate: z.coerce.date().optional(),
     tags: z.array(z.string()).default([]),
+    /** Hard hide — not scheduled. Prefer future `pubDate` for timed release. */
     draft: z.boolean().default(false),
+    /** Public path to cover image, e.g. `/posts/github-idp/cover-01.png` */
+    cover: z.string().optional(),
   }),
 });
 

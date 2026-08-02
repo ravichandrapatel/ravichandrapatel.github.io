@@ -5,17 +5,22 @@ interface Props {
   title: string;
   description?: string;
   path?: string;
+  cover?: string;
 }
 
 const {
   title,
   description = "AWS · Azure · GCP · Linux · DevOps — field notes by Ravichandra.",
   path = "/",
+  cover,
 } = Astro.props;
 
 const base = import.meta.env.BASE_URL;
 const canonical = new URL(path.replace(/^\//, ""), Astro.site);
 const pageTitle = title === "cloud-dispatch" ? title : `${title} · cloud-dispatch`;
+const coverHref = cover
+  ? new URL(cover.replace(/^\//, ""), Astro.site).href
+  : undefined;
 ---
 
 <!doctype html>
@@ -24,9 +29,17 @@ const pageTitle = title === "cloud-dispatch" ? title : `${title} · cloud-dispat
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="generator" content={Astro.generator} />
+    <meta name="author" content="Ravichandra" />
     <meta name="description" content={description} />
     <link rel="canonical" href={canonical} />
     <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+    {coverHref && (
+      <>
+        <meta property="og:image" content={coverHref} />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:image" content={coverHref} />
+      </>
+    )}
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

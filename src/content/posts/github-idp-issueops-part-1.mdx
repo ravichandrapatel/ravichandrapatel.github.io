@@ -1,0 +1,346 @@
+---
+title: "Building an IDP on a Shoestring: Why Control and Workload Must Live Apart"
+description: "GitHub-only internal developer portal — four-repo layout, trust boundaries, and why intake never holds cloud apply power. S3 on AWS is the demo product, not the ceiling."
+pubDate: 2026-08-04T13:30:00.000Z
+updatedDate: 2026-08-04T13:30:00.000Z
+tags: [github-actions, issueops, idp, platform-engineering, github, architecture, notes]
+draft: false
+cover: /posts/github-idp/cover-01.png
+---
+
+import GitHubIssueOpsFlow from "../../components/diagrams/GitHubIssueOpsFlow.tsx";
+
+*Building an internal developer portal with only GitHub Issues, Actions, and workflows — no second login, no portal VM to babysit. This post is the architecture cut.*
+
+[Problem](#1-the-problem-i-was-solving) · [Glance](#architecture-at-a-glance) · [Vocabulary](#2-vocabulary--what-each-thing-is) · [Inspiration](#3-where-the-idea-came-from) · [Repos](#4-the-four-repos-in-detail) · [Decisions](#5-decision-log--why-this-shape) · [Trust](#6-trust-boundaries-and-blast-radius) · [Rules](#7-hard-rules-and-why) · [Config](#8-config-map--what-lives-where) · [Non-goals](#9-what-this-is-not) · [Next](#10-whats-next)
+
+## 1. The problem I was solving
+
+I already live in GitHub. Issues. PRs. Actions. Labels. Reviews. If the “internal developer portal” is a different hostname with a different login, people open a ticket in Slack instead. I’ve watched that movie. It always ends the same way.
+
+I wanted a **golden path** shape: fill a form → platform validates → Git records the change → CI plans → someone approves apply → the cloud (or whatever backend you point modules at) gets the resource. Audit trail in Git. No ClickOps as the happy path.
+
+**S3 on AWS is the example I wired end-to-end — not the religion.** Same IssueOps pattern works for the next product you catalog: RDS, a DNS record, a GCP bucket, an Azure storage account, an internal API that isn’t “cloud” at all. The portal is GitHub. The product is whatever you put in the catalog.
+
+Constraints I refused to drop for v1:
+
+| Constraint | Meaning |
+| --- | --- |
+| **Zero host for this path** | No Backstage / custom portal VM I have to patch for IssueOps |
+| **Git is source of truth** | Stacks live in repos; Issues are intake, not the database of infra |
+| **Control ≠ cloud** | Intake must not hold cloud apply power (OIDC roles, `tofu apply`, the keys to the kingdom) |
+| **Pinned automation** | No floating `main` / `latest` for the pipeline or modules |
+| **Public demo possible** | Control can be public for teaching — without strangers provisioning |
+
+So: a **GitHub-only** control plane that validates and opens PRs — and a separate workload plane that plans and applies. This post is the architecture cut: what each piece is, and **why** those planes must not share a trust domain. Spoiler: because I don’t want a typo in an Issue Form to become `apply` in prod.
+
+Live control (public demo): [ravichandrapatel/gh-platform-control](https://github.com/ravichandrapatel/gh-platform-control). The S3 path is what’s demoable today; the layout is what you reuse for everything else.
+
+I also run a sibling **K8s / Backstage** IDP. Different plane (Argo, spokes, NaaS). Don’t mash them into one “IDP” story — I already did that in my head once and it got messy.
+
+## Architecture at a glance
+
+Four repositories. Two trust domains. One hard rule: **intake never owns apply.**
+
+| Repo | Job | Trust domain |
+| --- | --- | --- |
+| `gh-platform-control` | Issue Forms, catalog, pins, authz, codegen, App-opened PRs | Intake |
+| `gh-platform-actions` | Reusable `tofu-pipeline` + policy, pinned by **SHA** | Pipeline product |
+| `gh-platform-modules` (or your remotes) | SemVer-tagged modules you already release | Library |
+| `infra-dev` / `infra-prod` | GitOps roots, OIDC, Environment apply gate | Workload / deploy |
+
+Control can be public for teaching. Workloads stay private. Cloud credentials live only on the workload side.
+
+Toggle **Layers** for the repo map, **Happy path** / **Public gate** for UX, **Trust** for where authority stops:
+
+<GitHubIssueOpsFlow client:load initialMode="layers" />
+
+```text
+Requester / operator
+        │
+        ▼
+gh-platform-control     Issue Form → validate → codegen → App PR
+        │               tracking Deployment: issueops-<env>
+        │ App token (Contents + PR write on workload only)
+        ▼
+infra-<env> (private)   stacks/ + tofu.yml → tofu-pipeline@SHA
+        │               Environment gate on apply
+        ▼
+Cloud account for env   OIDC role; state backend per stack
+
+Pinned by SHA ◄── gh-platform-actions
+Pinned by tag ◄── your modules (demo: gh-platform-modules)
+```
+
+> **Key principle.** Control generates changes. Workload authorizes apply. If that sentence is wrong in your design, you are not running this architecture — you built a different (riskier) one.
+
+Deep dive per repo is [§4](#4-the-four-repos-in-detail). Decisions and blast radius follow.
+
+## 2. Vocabulary — what each thing is
+
+Shared words so later sections don’t thrash:
+
+| Term | What it means here |
+| --- | --- |
+| **Control plane** | `gh-platform-control` — intake, catalog, pins, authz, codegen, status labels |
+| **Workload / GitOps root** | `infra-dev`, `infra-prod` — real `stacks/**`, real OIDC, real apply |
+| **Product** | A catalogued golden path — form + templates + module pin. Demo product: `s3-bucket`. Yours might be `postgres`, `cdn`, whatever you ship |
+| **IssueOps** | Using GitHub Issues + labels as the provision workflow trigger |
+| **Natural key** | Stable identity for a resource in Git (demo: `s3-bucket:<env>:<bucket_name>`) — not the issue number |
+| **Pin** | Immutable reference: Actions = 40-char SHA; modules = SemVer tag |
+| **Tracking Environment** | GitHub Environment on **control** named `issueops-<env>` — status only |
+| **Deploy Environment** | GitHub Environment on **workload** named `dev` / `prod` — OIDC + apply gate |
+| **tofu-pipeline** | Reusable workflow in `gh-platform-actions`: validate → plan (+ policy) → gated apply |
+
+If those blur, the UI will lie to you. Especially tracking vs deploy Environments. GitHub loves naming things “Environments.” Ask me how I know.
+
+> **Mental model.** Tracking Environment → progress on the issue. Deploy Environment → authority to change the cloud. Same word in GitHub’s UI. Opposite jobs in this design.
+
+## 3. Where the idea came from
+
+Credit where it’s due: Bitovi’s *[GitHub as a Platform Engineering Platform — The GitHub Actions Path](https://www.bitovi.com/blog/github-as-a-platform-engineering-platform-the-github-actions-path)* is a good pattern essay on keeping platform delivery inside GitHub. Classic DevOps still dumps Helm / Kubernetes / Terraform onto every app team; platform work should wrap that behind a thinner interface. Their sketch organizes the machinery into layers — IaC modules, reusable Actions, workload workflows that call those Actions. “DevOps in a box,” Actions and PRs as the gravity well. Read it for the mindset.
+
+These posts are the **build log for a concrete GitHub-only IDP** I actually run. Inspiration is layered Actions; the product is IssueOps you can operate. **S3 is the first product I shipped through it** so the screenshots aren’t imaginary. It is not the only thing this shape is for.
+
+**Intake is an Issue Form.** In the demo, a developer opens **Issues → Provision S3 bucket**, fills fields, and submits. Labels (`issueops` + `product:*`) start automation. Your next form might say “Provision Postgres” or “Request a DNS name.” Same machine. No separate portal host — the box they open is already GitHub. Fancy.
+
+The four-repo cut and Rule #2 (control never assumes cloud roles) are in the [glance](#architecture-at-a-glance). Pins, natural keys, and public-demo gates — empty form labels + `operators.yaml` — are the product decisions that make IssueOps safe to demo and to harden later ([stand-up & harden](/posts/github-idp-issueops-part-4/)).
+
+## 4. The four repos in detail
+
+What each remote owns. Flow diagram is in the glance above — toggle **Trust** there when you care about the hard stop.
+
+### 4.1 `gh-platform-control` — intake
+
+**What it is:** the only repo requesters need to see for “I want X” — in the demo, a bucket; tomorrow, whatever you catalog.
+
+**What it holds:**
+
+- Issue Forms (`.github/ISSUE_TEMPLATE/`)  
+- Operator allowlist (`config/operators.yaml`)  
+- Env → workload registry (`config/environments.yaml`)  
+- Pins (`config/pins.yaml`)  
+- Product catalog (`config/catalog/products/`)  
+- Codegen templates (`templates/<product>/`)  
+- Workflows: `issue-provision`, `status-sync`, control `ci`  
+
+**What it deliberately does not hold:** cloud OIDC roles, OpenTofu roots, `tofu apply`, real deploy Environment protection.
+
+**Why it exists as its own repo:** so visibility, collaborators, and blast radius of “someone can open an issue” stay separated from “this token can change the cloud.” Control can be public for demos; workloads stay private.
+
+### 4.2 `infra-<env>` — GitOps truth + cloud
+
+**What it is:** one private GitOps root per environment. MVP: `infra-dev` and `infra-prod`.
+
+**What it holds:**
+
+- `stacks/<product>-<key>/` OpenTofu roots (usually generated by IssueOps)  
+- Caller workflow `tofu.yml` that invokes `tofu-pipeline` at a pinned SHA  
+- GitHub Environment `dev` or `prod` (apply reviewers, OIDC `sub` trust)  
+- Secret `MODULES_GIT_TOKEN` for module download  
+- The only place that assumes the cloud deploy role (OIDC / workload identity)  
+
+**Why one repo per env/account:** prod reviewers, OIDC trust, and state backends must not share a blast radius with dev. Merging `infra-dev` and `infra-prod` into one repo with two folders is how people accidentally plan against the wrong account. Ask your future self before you “simplify.”
+
+### 4.3 `gh-platform-actions` — the pipeline product
+
+**What it is:** the reusable multi-stage OpenTofu pipeline and policy pack.
+
+**What it holds:**
+
+- `.github/workflows/tofu-pipeline.yml`  
+- Conftest/Checkov policies under `policies/`  
+- Docs for callers  
+
+**Why separate from control:** pipeline changes are security-sensitive and should be reviewed once, then consumed by **every** workload via an immutable SHA. Catalog churn (“add a form field”) should not force a pipeline review. Floating `uses: …@main` is forbidden — see pins.
+
+### 4.4 `gh-platform-modules` — the IaC library
+
+**What it is:** tagged OpenTofu modules (`s3/v1.0.0`, `tagging/v1.0.0`, …).
+
+**Why separate from actions:** different release cadence and versioning model. Humans reason about module SemVer; Actions pin SHAs for supply-chain hygiene. IssueOps already points at those tags (`s3/v1.0.0`, `tagging/v1.0.0`, …) when it renders a stack.
+
+### 4.5 How a request crosses the seams
+
+High-level only (machine detail in [the provision path](/posts/github-idp-issueops-part-3/)):
+
+1. Issue lands on control (maybe unlabeled on a public demo).  
+2. Labels `issueops` + `product:<id>` start `issue-provision`.  
+3. Control validates author + catalog + env registry, renders templates.  
+4. Control mints a **GitHub App** installation token scoped to the **workload** repo.  
+5. App opens/updates a PR under a natural-key branch.  
+6. Workload CI plans; merge + Environment approval applies to the cloud.  
+7. Optional callback updates control labels (`status-sync`).  
+
+Control’s job ends at “valid PR exists.” Cloud’s job starts at “workload CI.”
+
+## 5. Decision log — why this shape
+
+These are the calls I made on purpose. Alternatives I rejected in parentheses. Grouped so you can skim the slice you care about; D-numbers stay stable for the rest of the series.
+
+### Security & trust
+
+#### D2 — Four repos, not one monorepo
+
+**Decision:** control / actions / modules / `infra-*` are separate remotes.  
+**Why:** Different visibility, different release units, different reviewers, different blast radius.  
+**Rejected:** One mega-repo with folders — public demo and private cloud trust cannot share the same collaborator model cleanly.
+
+#### D3 — Control never assumes cloud roles
+
+**Decision:** No OIDC / workload-identity deploy role on control. No `tofu apply` in control workflows.  
+**Why:** If control is public or broadly readable, a workflow bug or poisoned PR must not become “apply to prod.” Worst case from control: open a PR on a private workload (still gated by App install + workload protection).  
+**Rejected:** “Central apply runner” on the control repo. That’s how you invent a second cloud account you didn’t mean to.
+
+#### D6 — GitHub App for cross-repo PRs (not a user PAT)
+
+**Decision:** App installation token minted on control, scoped to the target workload.  
+**Why:** Bot identity, least privilege per repo, no human PAT in secrets that inherits that human’s access everywhere.  
+**Rejected:** Personal access token of a maintainer for PR open.
+
+#### D7 — App install on workloads; credentials on control
+
+**Decision:** Install the App where PRs are written (`infra-*`). Store `CONTROL_CLIENT_ID` / `CONTROL_APP_PRIVATE_KEY` only on control.  
+**Why:** Mint happens in `issue-provision` (control). Act happens on workload. Installing the App on control is unnecessary for this flow — control uses `GITHUB_TOKEN` for labels/comments/tracking Deployments.  
+**Rejected:** Putting App PEM on every workload, or installing App only on control.
+
+#### D12 — Break-glass is a workload PR, not tofu in control
+
+**Decision:** Emergencies still PR on `infra-<env>` through the same pipeline.  
+**Why:** One apply path. No “secret control apply” that skips review culture.  
+**Rejected:** `workflow_dispatch` apply from control into the cloud.
+
+### Versioning & supply chain
+
+#### D5 — Actions pin by SHA; modules by SemVer tag
+
+**Decision:** `pins.yaml` + workload `uses: …@<40-char-sha>`; modules `?ref=s3/vX.Y.Z`.  
+**Why:** Pipeline supply chain wants immutable commits. Module consumers want human SemVer.  
+**Rejected:** `@main`, `@latest`, moving tags as “pins.”
+
+#### D11 — Policy in the pipeline (Checkov + Conftest), not only in hope
+
+**Decision:** `tofu-pipeline` runs fmt/validate/Checkov on validate; Conftest/OPA on the plan JSON before apply is allowed to proceed.  
+**Why:** Catalog allowlists catch bad form input; policy catches bad plan shape. Defense in depth.  
+**Deferred:** Exhaustive Rego catalog as a blog topic.
+
+### Identity & naming
+
+#### D8 — Natural-key stacks (no issue number in the path)
+
+**Decision:** Natural-key paths — demo uses `stacks/s3-bucket-<bucket_name>/`, branch `issueops/s3-bucket-<bucket_name>/`. Next product: same idea, different prefix.  
+**Why:** Re-runs attach; duplicates fail closed; Git path is the identity operators can grep. Issue numbers are ephemeral.  
+**Rejected:** `stacks/…-issue-42/` (collision chaos when issues close/reopen — and they will).
+
+#### D9 — Tracking Environments named `issueops-<env>`
+
+**Decision:** Control Deployments use `issueops-dev` / `issueops-prod`, not bare `dev`.  
+**Why:** GitHub’s UI makes bare `dev` look like “Ready to deploy to the cloud.” That lie causes people to put protection rules on the wrong repo. I fell for the UI once. Never again.  
+**Rejected:** Reusing the same Environment names on control and workload.
+
+#### D10 — Public control with empty form labels + author authz
+
+**Decision:** Forms ship with `labels: []`; workflow `if:` requires labels; `authorize_requester.py` checks **issue author**.  
+**Why:** Public Issues mean strangers can open forms. Auto-label would burn Actions minutes and mint App tokens for drive-by traffic.  
+**Rejected:** Auto-applying `issueops` on submit for a public control repo.
+
+### Operational model
+
+#### D1 — GitHub Issues as the portal (not Backstage for this path)
+
+**Decision:** Issue Forms + labels are the v1 UI.  
+**Why:** Zero host to run. Same auth as the rest of engineering. PR/issue history is the audit trail.  
+**Rejected:** Custom portal or Backstage template for S3 v1 (I already have a K8s/Backstage plane elsewhere; this path stays GitHub-native).
+
+#### D4 — Environment = one cloud account (MVP)
+
+**Decision:** `dev` and `prod` only; each maps to one account/subscription/project and one `infra-<env>` repo. My demo accounts are AWS. Yours might be GCP projects or Azure subscriptions — same cut.  
+**Why:** Simplest mental model for blast radius and OIDC `sub` conditions.  
+**Deferred:** team/product dimensions, shared services accounts — add registry rows later without copying the control plane.
+
+## 6. Trust boundaries and blast radius
+
+Where trust stops — same diagram, **Trust** mode:
+
+<GitHubIssueOpsFlow client:load initialMode="trust" />
+
+| If this is compromised… | Worst realistic outcome | What still protects you |
+| --- | --- | --- |
+| Public issue spam on control | Noise; failed authz | Empty form labels; operators allowlist; Interaction limits |
+| Control Actions secret (`CONTROL_APP_PRIVATE_KEY`) | Attacker can open PRs on **installed** workloads | Workload branch protection; required reviews; Environment apply gate; App only installed where you chose |
+| Workload `MODULES_GIT_TOKEN` | Read modules repo | No cloud apply by itself |
+| Workload OIDC role | Plan/apply in **that** account | Separate prod account/repo; Environment reviewers; Conftest |
+| Floating pin to attacker-controlled SHA | Pipeline becomes theirs | `validate-pins.sh`; CODEOWNERS on pins; no `@main` |
+
+> **Takeaway.** No single leaked control secret should apply to the cloud. Apply always requires workload merge + Environment + OIDC. That’s D3 / Rule #2 with consequences.
+
+### What breaks first as adoption grows
+
+This layout is fine for a handful of operators and two accounts. Growth pressure shows up before “the cloud is too small”:
+
+| Pressure | Symptom | What to watch |
+| --- | --- | --- |
+| IssueOps volume | Actions minutes on control + workloads; queue noise | Billing; abandoned `status:pr-open` claims holding natural keys |
+| Many products / envs | `environments.yaml` + form dropdowns + App installs sprawl | Registry drift; App installed on the wrong repo |
+| Pin fan-out | Pipeline SHA updated in control but not every `infra-*` `uses:` | Divergent plan behavior; `validate-pins.sh` + CODEOWNERS |
+| Duplicate contention | Frequent `validation-failed` on popular names | Natural-key hygiene; close dead PRs |
+| Public control | Spam issues even when authz fails closed | Interaction limits; make control private for real users |
+
+At 2× teams I would still keep **one** control plane and add registry rows — not fork control per team. The first expensive failure mode is usually **pin / Environment / App install drift**, not OpenTofu itself.
+
+## 7. Hard rules and why
+
+| # | Rule | Why |
+| --- | --- | --- |
+| 1 | Environment = one cloud account (MVP) | Clear blast radius; simple OIDC `sub` |
+| 2 | Control never assumes cloud roles | Intake ≠ cloud root |
+| 3 | Actions = SHA; modules = SemVer; no floating refs | Supply chain + human versioning |
+| 4 | Tracking ≠ deploy Environment names | UI honesty |
+| 5 | Git is SoT for uniqueness | Natural keys; cloud orphans are non-goals for control |
+| 6 | Workloads private in any serious deployment | OIDC + stacks are sensitive |
+| 7 | Pin bumps don’t rewrite old stacks | Explicit upgrade PRs; no surprise drift |
+
+The later posts assume these. If you violate #2, you are not running this architecture — you built a different (riskier) one.
+
+## 8. Config map — what lives where
+
+File roles on control (how to fill them is [stand-up & harden](/posts/github-idp-issueops-part-4/)):
+
+| Path | What it is | Who changes it |
+| --- | --- | --- |
+| `config/operators.yaml` | GitHub logins allowed to be issue **authors** for provision | Platform owners |
+| `config/environments.yaml` | `dev`/`prod` → workload repo, account id, role ARN, region | Platform owners |
+| `config/pins.yaml` | Actions repo + SHA; modules repo + `tagging_ref` | Platform owners (security-sensitive) |
+| `config/catalog/products/*.yaml` | Allowed inputs, patterns, module path/ref, natural-key fields | Platform owners |
+| `templates/<product>/` | Files rendered into the workload PR | Platform owners |
+| `.github/ISSUE_TEMPLATE/*.yml` | Human form; keep `labels: []` if public | Platform owners |
+| `examples/infra-*/` | Starter trees to copy into real private workloads | Copied once, then live on `infra-*` |
+
+On each workload:
+
+| Path / setting | What it is |
+| --- | --- |
+| `stacks/**` | Live OpenTofu roots |
+| `.github/workflows/tofu.yml` | Caller; must pin same Actions SHA as `pins.yaml` |
+| Environment `dev`/`prod` | Apply gate + OIDC subject |
+| Secret `MODULES_GIT_TOKEN` | Read modules during `tofu init` |
+
+Canonical short write-up: [ARCHITECTURE.md](https://github.com/ravichandrapatel/gh-platform-control/blob/main/ARCHITECTURE.md).
+
+## 9. What this is not
+
+- **Not** an “AWS portal.” The demo product is S3 on AWS. The pattern is IssueOps + GitOps for whatever modules you already ship.  
+- **Not** a multi-tenant SaaS portal for strangers on the internet. Public control needs gates — harden before real users ([stand-up & harden](/posts/github-idp-issueops-part-4/#9-production-readiness-and-security)).  
+- **Not** the K8s/Backstage IDP. Sibling plane. I keep those stories separate on purpose.  
+- **Not** ClickOps as the happy path. Break-glass is still a Git PR on the workload — even at 2 a.m. Especially at 2 a.m.
+
+## 10. What’s next
+
+**Done in this post:** architecture at a glance, vocabulary, four-repo deep dive, themed decision log, trust boundaries, hard rules.
+
+**Next:** [Issue Forms, labels, and the public gate](/posts/github-idp-issueops-part-2/) — how an operator actually uses the portal in practice.
+
+### Related reading
+
+- Bitovi: [GitHub as a Platform Engineering Platform](https://www.bitovi.com/blog/github-as-a-platform-engineering-platform-the-github-actions-path)  
+- Control: [ARCHITECTURE.md](https://github.com/ravichandrapatel/gh-platform-control/blob/main/ARCHITECTURE.md) · [PUBLIC_DEMO.md](https://github.com/ravichandrapatel/gh-platform-control/blob/main/docs/PUBLIC_DEMO.md)

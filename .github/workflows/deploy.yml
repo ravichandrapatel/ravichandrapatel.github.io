@@ -1,12 +1,16 @@
 # FILE_NAME: deploy.yml
-# DESCRIPTION: Build Astro site and deploy to GitHub Pages.
-# VERSION: 0.1.0
+# DESCRIPTION: Build Astro site and deploy to GitHub Pages (push + mid-week schedule).
+# VERSION: 0.2.0
 
 name: Deploy to GitHub Pages
 
 on:
   push:
     branches: [main]
+  # Rebuild so future-dated posts become live after pubDate.
+  # 13:30 UTC = 19:00 IST — Tue–Fri midpoint of 18:30–20:30 IST window.
+  schedule:
+    - cron: "30 13 * * 2,3,4,5"
   workflow_dispatch:
 
 permissions:

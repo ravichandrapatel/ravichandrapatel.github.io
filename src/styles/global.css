@@ -78,6 +78,7 @@ img {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow-x: clip;
 }
 
 .site-header {
@@ -259,6 +260,32 @@ img {
   margin-inline: auto;
   padding: 2.75rem var(--page-pad) 5rem;
   text-align: left;
+}
+
+.prose .post-cover {
+  display: block;
+  margin: 0 0 1.75rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0b1016;
+  line-height: 0;
+  font-size: 0;
+}
+
+.prose .post-cover img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  object-position: center;
+  background: #0b1016;
 }
 
 .prose h1 {
@@ -460,6 +487,33 @@ img {
   font-size: 0.82em;
 }
 
+.prose :where(blockquote) {
+  margin: 1.35rem 0 1.75rem;
+  padding: 0.85rem 1.1rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--bg-2) 55%, transparent);
+  color: var(--ink-dim);
+}
+
+.prose :where(blockquote p) {
+  margin: 0;
+}
+
+.prose :where(blockquote p + p) {
+  margin-top: 0.55rem;
+}
+
+.prose :where(blockquote strong:first-child) {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
 @media (max-width: 640px) {
   .prose :where(table) {
     display: block;
@@ -488,6 +542,38 @@ img {
   border-bottom: 1px solid var(--line);
 }
 
+.post-list li.has-cover {
+  display: grid;
+  grid-template-columns: minmax(9rem, 12rem) 1fr;
+  gap: 1.1rem 1.25rem;
+  align-items: start;
+  padding: 1.35rem 0;
+}
+
+.post-list-cover {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0b1016;
+  aspect-ratio: 16 / 9;
+}
+
+.post-list-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
+.post-list-body a {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  color: var(--ink);
+  text-decoration: none;
+}
+
 .post-list a {
   font-family: var(--font-display);
   font-size: 1.25rem;
@@ -495,7 +581,8 @@ img {
   text-decoration: none;
 }
 
-.post-list a:hover {
+.post-list a:hover,
+.post-list-body a:hover {
   color: var(--accent);
 }
 
@@ -503,6 +590,12 @@ img {
   margin: 0.35rem 0 0;
   color: var(--ink-dim);
   font-size: 1rem;
+}
+
+@media (max-width: 640px) {
+  .post-list li.has-cover {
+    grid-template-columns: 1fr;
+  }
 }
 
 @keyframes rise {

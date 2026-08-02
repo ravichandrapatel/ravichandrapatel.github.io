@@ -1,0 +1,211 @@
+---
+title: "Building an IDP on a Shoestring: Issue Forms, Labels, and the Public Gate"
+description: "GitHub-only IDP operator UX — Issue Forms as the portal, empty labels as the gate, natural keys. S3 is the worked example; the pattern is any catalog product."
+pubDate: 2026-08-05T13:30:00.000Z
+updatedDate: 2026-08-05T13:30:00.000Z
+tags: [github-actions, issueops, idp, platform-engineering, github, notes]
+draft: false
+cover: /posts/github-idp/cover-02.png
+---
+
+import GitHubIssueOpsFlow from "../../components/diagrams/GitHubIssueOpsFlow.tsx";
+
+*The portal is an Issue Form. Labels are the gate. Natural keys keep stacks sane. S3 is today’s demo — not the only product you’ll ever ship.*
+
+[Assumes](#0-assumes) · [Form](#1-the-issue-form) · [Gate](#2-public-gate-and-authz) · [Happy path](#3-happy-path-ux) · [Labels](#4-labels-as-state) · [Natural keys](#5-natural-keys) · [Environments](#6-tracking-vs-deploy-environments) · [In the wild](#7-in-the-wild) · [Next](#8-whats-next)
+
+## 0. Assumes
+
+[architecture](/posts/github-idp-issueops-part-1/) drew the four-repo map and the trust cut. This post is the operator story: what you fill in, what gets checked, and how state shows up on the issue.
+
+**Worked example in this post:** **Provision S3 bucket** on [gh-platform-control](https://github.com/ravichandrapatel/gh-platform-control). That’s the form I can screenshot. The stack that lands already calls **modules you release** (my demo uses monorepo tags like `s3/v1.0.0`; your org may use one-repo-per-module — same idea).
+
+IssueOps doesn’t care that the resource is S3. It cares that you have a form, a catalog product, templates, and a module pin. Next week’s product is a YAML file and a template folder away — not a new portal.
+
+Toggle **Layers** / **Happy path** / **Public gate**:
+
+<GitHubIssueOpsFlow client:load initialMode="happy" />
+
+## 1. The Issue Form
+
+The form is how a human describes *intent* without writing OpenTofu. Each field maps to catalog rules and eventually to a rendered stack on `infra-<env>`. That’s the whole pitch: people who shouldn’t be editing HCL still get a golden path.
+
+Demo form: [`.github/ISSUE_TEMPLATE/s3-bucket.yml`](https://github.com/ravichandrapatel/gh-platform-control/blob/main/.github/ISSUE_TEMPLATE/s3-bucket.yml). Copy the shape for the next product — don’t treat this file as scripture.
+
+![Issue Form preview for Provision S3 bucket — environment, bucket name, project, versioning](/posts/github-idp/issue-form-preview.png)
+
+| Field `id` | Why it exists |
+| --- | --- |
+| `environment` | Picks the row in `config/environments.yaml` → which workload repo and cloud account |
+| `bucket_name` | Becomes the natural key and the stack folder name — must be a valid, globally unique S3 name |
+| `project` | Tagging input for the shared tagging module |
+| `enable_versioning` | Product option (`true` / `false`) the template passes through |
+
+Title prefix `[provision][s3-bucket] ` keeps issues greppable.  
+
+**Empty `labels: []` on the form is intentional.** Submit alone does nothing. On a public control repo, auto-labeling would let any GitHub user start `issue-provision`, mint an App token, and open workload PRs. An operator must add `issueops` + `product:s3-bucket` after triage.
+
+```yaml
+name: Provision S3 bucket
+title: "[provision][s3-bucket] "
+labels: []
+```
+
+**Copy/paste class:** Requires modification — keep `labels: []` on public control; rename for your product.
+
+The catalog entry is the allowlist that backs the form — patterns, required fields, and **which module tag the rendered stack will use**:
+
+```yaml
+id: s3-bucket
+module:
+  path: s3
+  ref: s3/v1.0.0          # my monorepo-style tag — swap for your repo’s vX.Y.Z
+stack_id_from:
+  - product
+  - bucket_name
+uniqueness_key_from:
+  - bucket_name
+```
+
+**Copy/paste class:** Requires modification — `module.path` / `ref` must match **your** release tags.
+
+Templates turn that into a normal `source = "git::…?ref=…"` (monorepo path or a dedicated module remote — see [modules library](/posts/github-idp-issueops-part-1/#44-gh-platform-modules--the-iac-library)). From the catalog, control also derives:
+
+- Stack path: `stacks/s3-bucket-<bucket_name>/`  
+- Branch: `issueops/s3-bucket-<bucket_name>`  
+- Natural key: `s3-bucket:<env>:<bucket_name>`  
+
+No issue number in the path — so re-runs and duplicates behave predictably (next section + [the provision path](/posts/github-idp-issueops-part-3/#3-natural-key-uniqueness)).
+
+## 2. Public gate and authz
+
+Three doors, all must open:
+
+1. **Labels** — workflow `if:` requires `issueops` ∧ `product:s3-bucket`. No labels → job never starts.  
+2. **Author allowlist / write** — `authorize_requester.py` checks the **issue author**, not who clicked the labels. Author must be in `operators.yaml` **or** have write/maintain/admin on control.  
+3. **Private workloads** — even a successful control run only opens a PR on `infra-*`; the cloud still sits behind workload CI + Environment.
+
+```yaml
+# config/operators.yaml
+operators:
+  - ravichandrapatel
+```
+
+**Copy/paste class:** Requires modification — replace with your handles; remove demo users before real traffic.
+
+Why author, not labeler? So a maintainer can triage a stranger’s issue without accidentally running as that stranger — and so a stranger can’t get provisioned just because someone helpful slapped labels on their issue. Either allowlist them, grant write, or re-file as yourself.
+
+```yaml
+on:
+  issues:
+    types: [opened, edited, reopened, labeled]
+
+jobs:
+  provision:
+    if: >-
+      contains(github.event.issue.labels.*.name, 'issueops') &&
+      contains(github.event.issue.labels.*.name, 'product:s3-bucket')
+```
+
+**Copy/paste class:** Requires modification — swap `product:s3-bucket` for your product label.
+
+Toggle **Public gate** on the diagram for the fail-closed picture.
+
+## 3. Happy path UX
+
+End to end from the human side:
+
+1. Open **Issues → New → Provision S3 bucket**, fill fields, submit. **No Actions yet.**  
+2. Operator adds `issueops` + `product:s3-bucket` (optional `status:pending-validation`).  
+3. `issue-provision` runs: authz → validate → render stack from templates using your module pins → App opens/updates the workload PR → issue comment + `status:pr-open`.  
+4. On **private** `infra-dev`, review the PR (plan CI). Merge when green.  
+5. Apply runs under the workload Environment. Further status labels need `status-sync` wired ([the provision path](/posts/github-idp-issueops-part-3/#5-status-sync)).
+
+What you’re looking at after step 3 is not “the cloud is done” — it’s “Git has a proposed stack that already references your modules.” Actual resources show up after merge + apply. Patience. Or coffee.
+
+GIF of that trail:
+
+![Animated strip — issues list, accepted issue, Actions success](/posts/github-idp/issueops-flow.gif)
+
+## 4. Labels as state
+
+Labels are the cheap state machine on the issue. Bootstrap once:
+
+```bash
+./scripts/bootstrap-labels.sh OWNER/gh-platform-control
+```
+
+| Label | Meaning |
+| --- | --- |
+| `issueops` | Eligible for the provision workflow |
+| `product:s3-bucket` | Which product router / catalog entry |
+| `status:pending-validation` | Optional “we’ve seen it” marker |
+| `status:pr-open` | Workload PR exists — next stop is plan/merge |
+| `status:validation-failed` | Authz, schema, catalog, or duplicate rejected |
+| `status:config-error` | Pins / App credentials broken on control |
+| `status:provision-failed` | PR or tracking Deployment failed after validate |
+| `status:plan-ok` / `plan-failed` | From `status-sync` when you wire the callback |
+| `status:applied` / `apply-failed` | Same |
+
+Until the callback exists, **`status:pr-open` is the honest end state** for many happy paths. Don’t wait on `status:applied` unless you’ve hooked it up.
+
+## 5. Natural keys
+
+Issue numbers are bad identity. Close issue #42, open another for the same bucket — what happens to `stacks/…-42/`? Instead identity is the **natural key**:
+
+`s3-bucket:<env>:<bucket_name>` → folder `stacks/s3-bucket-<bucket_name>/` → branch `issueops/s3-bucket-<bucket_name>`.
+
+| Situation | What you should expect |
+| --- | --- |
+| Same issue re-labeled / re-run | **Attach** — refresh the same PR |
+| Different issue, same key | **Fail** + attach comments both ways |
+| Same name, different env | Allowed (different workload / account) |
+| Exists only in the cloud, not in git | Control ignores it — Git is source of truth (by design, not spite) |
+
+So uniqueness is a **platform feature**, not a bug when duplicates fail. Scan order and edge cases: [the provision path](/posts/github-idp-issueops-part-3/#3-natural-key-uniqueness).
+
+## 6. Tracking vs deploy Environments
+
+GitHub uses the word “Environment” for two different jobs in this design. Mixing them up is the most common UI footgun.
+
+| Repo | Name | Job |
+| --- | --- | --- |
+| Control | `issueops-dev`, `issueops-prod` | **Tracking** — link issue ↔ PR / Deployment status. No OIDC. No apply. |
+| Workload | `dev`, `prod` | **Deploy** — OIDC trust subject + required reviewers for apply |
+
+If control shows a bare Environment named `dev` that looks like “Ready to deploy,” delete it. That name belongs on `infra-dev`, not on intake. GitHub’s UI is optimistic. We are not.
+
+## 7. In the wild
+
+What it looked like on [gh-platform-control](https://github.com/ravichandrapatel/gh-platform-control) after a few runs — mix of `pr-open` and `validation-failed`:
+
+![Open IssueOps issues — labels show pr-open and validation-failed](/posts/github-idp/issues-list.png)
+
+Clean accept on [issue #15](https://github.com/ravichandrapatel/gh-platform-control/issues/15) — stack id, private PR link, `status:pr-open`:
+
+![Issue #15 accepted — github-actions comments with infra-dev PR link and status:pr-open](/posts/github-idp/issue-15-accepted.png)
+
+```text
+IssueOps accepted
+Stack: s3-bucket-issueops-nk-bucket-dev-021
+Workload: ravichandrapatel/infra-dev
+Pull request: https://github.com/ravichandrapatel/infra-dev/pull/9
+```
+
+Same bucket name, other issue — [issue #13](https://github.com/ravichandrapatel/gh-platform-control/issues/13) fails closed on the natural key:
+
+![Issue #13 validation-failed — natural key already claimed by another issue](/posts/github-idp/issue-13-validation-failed.png)
+
+```text
+IssueOps failed (duplicate)
+Natural key s3-bucket:dev:issueops-nk-bucket-dev-020 is already claimed (fail + attach).
+```
+
+I’ve been running these on **dev**. Prod is a registry row when you need it — same IssueOps, louder consequences.
+
+## 8. What’s next
+
+**Done in this post:** Issue Form fields, public gate + `operators.yaml`, labels as state, natural keys, tracking vs deploy Environments.
+
+**Next:** [From label to plan](/posts/github-idp-issueops-part-3/) — what `issue-provision` does under the hood, App tokens, `tofu-pipeline`, footguns.
+

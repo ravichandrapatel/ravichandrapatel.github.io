@@ -1,0 +1,671 @@
+---
+title: "Building an IDP on a Shoestring: Wire It Up and Harden for Real Users"
+description: "Bootstrap every repo, secret, and config for a GitHub-only IDP (including modules you already release), then production hardening. AWS OIDC/S3 is the worked example — not the only cloud."
+pubDate: 2026-08-07T13:30:00.000Z
+updatedDate: 2026-08-07T13:30:00.000Z
+tags: [github-actions, issueops, idp, platform-engineering, github, howto, security, notes]
+draft: false
+cover: /posts/github-idp/cover-04.png
+---
+
+*Wire your repos, secrets, and OIDC — then harden before real users. S3/AWS steps below are the worked example; swap the cloud bits for your provider.*
+
+[Assumes](#0-assumes-and-prerequisites) · [Order](#1-bootstrap-order) · [Repos](#2-create-the-repositories) · [Modules](#2a-point-at-modules-you-already-release) · [App](#3-github-app--create-install-credentials) · [Control](#4-configure-control-file-by-file) · [Workload](#5-configure-each-workload) · [OIDC](#6-aws-oidc-and-state-backend) · [Smoke](#7-first-smoke-test) · [Extend](#8-extend--pins-products-envs) · [Production](#9-production-readiness-and-security) · [Verify](#10-full-verification-checklist) · [FAQ](#11-faq) · [Next](#whats-next)
+
+## 0. Assumes and prerequisites
+
+Prior posts: [architecture](/posts/github-idp-issueops-part-1/), [operator UX](/posts/github-idp-issueops-part-2/), [machine path](/posts/github-idp-issueops-part-3/).
+
+This post is the stand-up and harden runbook. You already release OpenTofu/Terraform modules (one repo or many). Here you wire intake + pipeline + workloads to call them — you don’t rebuild your module farm. I’m not here to convert you to a new IaC religion.
+
+**This is not an AWS-only IDP.** The GitHub half (forms, App, labels, pins, App PRs) is cloud-agnostic. The demo workload uses **AWS OIDC + S3** because that’s what I stood up. If you’re on GCP or Azure, keep the GitHub layout; replace §6 with your provider’s OIDC + state backend. Same joke: control never holds apply power.
+
+**You need:**
+
+| Prerequisite | Notes |
+| --- | --- |
+| GitHub user or org that can create repos + a GitHub App | Org preferred for production |
+| Permission to create OIDC trust + deploy roles in your cloud `dev` (and later `prod`) | Demo below uses AWS IAM; separate accounts/projects recommended |
+| Module remotes you already tag/release | Monorepo **or** one-repo-per-module — any cloud those modules talk to |
+| `gh` CLI authenticated (`gh auth login`) | Optional but used in CLI paths below |
+
+**Replace everywhere:** `OWNER`, account IDs, role ARNs, regions, module git URLs. **Never** paste App private keys or module tokens into chat, issues, or screenshots. Future-you will thank past-you. Present-you will ignore this sentence. That’s fine — it’s still true.
+
+**Honesty:** my public control is a teaching posture. §0–§7 = working lab (S3 example). §9 = before real users.
+
+## 1. Bootstrap order
+
+Do these in sequence. Skipping ahead is how you get green validates and failed PRs.
+
+| Step | What | Done when |
+| --- | --- | --- |
+| 1 | Create intake + pipeline + `infra-dev` (reuse your existing module remotes) | Remotes exist; workloads **private** |
+| 2 | Point templates/catalog at **your** module `source`/`ref` | Rendered stack `tofu init` can fetch modules |
+| 3 | Create GitHub App → **install on workloads** → **credentials on control** | Mint works; App can open a test PR |
+| 4 | Fill control config (`operators`, `environments`, `pins`) | Pin/control validate scripts pass |
+| 5 | Bootstrap labels + control tracking Environments `issueops-*` | Labels visible on Issues |
+| 6 | Wire workload (`tofu.yml` SHA, module read token, Environment, OIDC, backend) | Plan job can assume role |
+| 7 | Protect `main` (rulesets) on control + workloads | Direct push to `main` blocked |
+| 8 | Smoke IssueOps on **dev** only | Issue → `status:pr-open` → plan green |
+| 9 | Harden for production (§9) before prod traffic | Checklist signed off |
+
+## 2. Create the repositories
+
+### 2.1 What to create
+
+| Plane | Source | Your repo | Visibility |
+| --- | --- | --- | --- |
+| Intake | Fork/clone [gh-platform-control](https://github.com/ravichandrapatel/gh-platform-control) | `OWNER/gh-platform-control` | Private for production; public only if you accept demo risk |
+| Pipeline | Fork [gh-platform-actions](https://github.com/ravichandrapatel/gh-platform-actions) | `OWNER/gh-platform-actions` | Private or public |
+| Modules | **Keep what you already have** — or fork my [gh-platform-modules](https://github.com/ravichandrapatel/gh-platform-modules) if you want a starter | Your remotes | Private recommended |
+| Workload | Copy `examples/infra-dev/` from control | `OWNER/infra-dev` | **Private** |
+| Workload prod | Copy `examples/infra-prod/` when ready | `OWNER/infra-prod` | **Private** |
+
+You do **not** need a new modules monorepo if `ORG/terraform-aws-s3`, `ORG/terraform-aws-tags`, … already release tags.
+
+### 2.2 UI — new empty workload from the example
+
+1. Clone control locally.  
+2. Copy the example tree into a new folder and push:
+
+```bash
+git clone https://github.com/OWNER/gh-platform-control.git
+cd gh-platform-control
+# Create empty private repo infra-dev on GitHub (UI: New repository → Private), then:
+rm -rf /tmp/infra-dev && mkdir -p /tmp/infra-dev
+cp -a examples/infra-dev/. /tmp/infra-dev/
+cd /tmp/infra-dev
+git init -b main
+git add .
+git commit -m "chore: bootstrap infra-dev from gh-platform-control example"
+git remote add origin https://github.com/OWNER/infra-dev.git
+git push -u origin main
+```
+
+**Copy/paste class:** Requires modification — replace `OWNER`; create the empty private repo first.
+
+### 2.3 Rewrite owner strings (do this before first provision)
+
+| Location | Change |
+| --- | --- |
+| Control `config/pins.yaml` | Actions `repository` + SHA → yours |
+| Control `config/environments.yaml` | `workload_repository`, account IDs, role ARNs |
+| Control `templates/**` | Module `source`/`ref` → **your** module remotes (§2a) |
+| Live `infra-*/.github/workflows/tofu.yml` | `uses: OWNER/gh-platform-actions/...@<sha>` and `aws_role_arn` |
+
+Lab shortcut: you may temporarily pin my public actions SHA and module tags while learning. Point cloud OIDC + App + module tokens at **your** accounts/projects.
+
+## 2a. Point at modules you already release
+
+IssueOps only needs the generated stack to `git::` fetch an immutable ref. Two common layouts:
+
+**A — One repo per module (common today)**
+
+```hcl
+# templates/s3-bucket/main.tf.tmpl (concept)
+module "bucket" {
+  source = "git::https://github.com/ORG/terraform-aws-s3.git?ref=v1.2.0"
+  # ...
+}
+
+module "tags" {
+  source = "git::https://github.com/ORG/terraform-aws-tags.git?ref=v3.0.1"
+  # ...
+}
+```
+
+Catalog `module.ref` / template placeholders should match those tags. `pins.yaml` “modules repository” becomes less important if every `source` is fully qualified per module — still fine to keep a default for shared helpers.
+
+**B — Module monorepo (my demo)**
+
+```hcl
+source = "git::https://github.com/OWNER/gh-platform-modules.git//s3?ref=s3/v1.0.0"
+```
+
+**Token on the workload:** fine-grained PAT (or machine user) with **Contents: Read** on every module remote `tofu init` will hit. One secret can cover several repos if the token’s resource list includes them all.
+
+Do not migrate modules into a monorepo just to adopt IssueOps. Change the template `source` lines.
+
+## 3. GitHub App — create, install, credentials
+
+Split of duties ([App install vs credentials](/posts/github-idp-issueops-part-1/#d7--app-install-on-workloads-credentials-on-control)):
+
+- **Install** App on **workload** repos (where PRs are written).  
+- **Store** Client ID + private key on **control** (where mint runs).  
+- Do **not** install the App on control for IssueOps. Control uses `GITHUB_TOKEN` for labels/comments/tracking Deployments.
+
+### 3.1 Create the App (UI)
+
+1. GitHub → profile/org → **Settings** → **Developer settings** → **GitHub Apps** → **New GitHub App**.  
+2. **GitHub App name:** e.g. `gh-platform-control`.  
+3. **Homepage URL:** your control repo URL (any valid URL works).  
+4. Uncheck **Webhook** Active (not required for mint + PR).  
+5. **Repository permissions:**  
+   - **Contents:** Read and write  
+   - **Pull requests:** Read and write  
+   - **Metadata:** Read-only  
+6. **Where can this GitHub App be installed?** Only on this account (or allow org).  
+7. **Create GitHub App**.  
+8. On the App page: copy **Client ID** (`Iv23…`) — **not** the numeric App ID.  
+9. **Generate a private key** → download the `.pem`. Store it in a password manager / secrets vault. Delete local copies after upload to GitHub Actions.
+
+### 3.2 Install on workloads (UI)
+
+1. App page → **Install App** (left).  
+2. Choose the account → **Only select repositories** → add `infra-dev` (and `infra-prod` when it exists).  
+3. **Install**.  
+4. After any permission change later: open each install → **Accept** new permissions.
+
+Confirm: App → **Installations** shows those repos. Contents + Pull requests must both be write.
+
+### 3.3 Put credentials on control only
+
+| Name | Type | Repo | Value |
+| --- | --- | --- | --- |
+| `CONTROL_CLIENT_ID` | Repository **variable** | `OWNER/gh-platform-control` | Client ID `Iv23…` |
+| `CONTROL_APP_PRIVATE_KEY` | Repository **secret** | `OWNER/gh-platform-control` | Full PEM body |
+
+**UI**
+
+1. Open `https://github.com/OWNER/gh-platform-control` → **Settings** → **Secrets and variables** → **Actions**.  
+2. **Variables** → **New repository variable** → Name `CONTROL_CLIENT_ID` → paste Client ID → **Add variable**.  
+3. **Secrets** → **New repository secret** → Name `CONTROL_APP_PRIVATE_KEY` → paste full PEM including `BEGIN`/`END` lines → **Add secret**.  
+
+You need admin on control.
+
+**CLI**
+
+```bash
+gh variable set CONTROL_CLIENT_ID -R OWNER/gh-platform-control --body 'Iv23…'
+gh secret set CONTROL_APP_PRIVATE_KEY -R OWNER/gh-platform-control < app-private-key.pem
+```
+
+**Copy/paste class:** Requires modification — `OWNER` + your PEM path. Never paste PEM into issues/chat. Delete local PEM after upload.
+
+**Do not** add these to `infra-*`. Workloads never mint the control App token for intake.
+
+## 4. Configure control file by file
+
+Work on a branch; open a PR to `main` once rulesets exist.
+
+### 4.1 `config/operators.yaml`
+
+```yaml
+operators:
+  - your-github-login
+  # - teammate-login
+```
+
+**Copy/paste class:** Requires modification — real logins only; empty allowlist + no write = everyone fails closed.
+
+**Meaning:** issue **author** must be listed **or** have `write` / `maintain` / `admin` on control (`operators_or_write` mode). Label-clicker identity is irrelevant.
+
+**UI check:** Settings → Collaborators — anyone you rely on for the “write” path needs write+.
+
+### 4.2 `config/environments.yaml`
+
+```yaml
+environments:
+  dev:
+    workload_repository: OWNER/infra-dev
+    github_environment: dev
+    aws_account_id: "123456789012"
+    aws_role_arn: arn:aws:iam::123456789012:role/gh-platform-dev
+    aws_region: us-east-1
+    tagging_environment: NON-PROD
+  prod:
+    workload_repository: OWNER/infra-prod
+    github_environment: prod
+    aws_account_id: "210987654321"
+    aws_role_arn: arn:aws:iam::210987654321:role/gh-platform-prod
+    aws_region: us-east-1
+    tagging_environment: PROD
+```
+
+Replace every `REPLACE_ACCOUNT_ID`. MVP: **one env = one AWS account = one workload repo**.
+
+### 4.3 `config/pins.yaml`
+
+```yaml
+actions:
+  repository: OWNER/gh-platform-actions
+  ref: REPLACE_WITH_40_CHAR_SHA
+modules:
+  repository: OWNER/gh-platform-modules
+  tagging_ref: tagging/v1.0.0
+```
+
+Get a SHA:
+
+```bash
+gh api repos/OWNER/gh-platform-actions/commits/main --jq .sha
+```
+
+Validate:
+
+```bash
+cd gh-platform-control
+./scripts/validate-pins.sh          # must pass — no main/latest
+```
+
+Use `ALLOW_PIN_PLACEHOLDERS=1` **only** while scaffolding.
+
+### 4.4 Product catalog + form (S3 starter)
+
+| Path | What you must verify |
+| --- | --- |
+| `config/catalog/products/s3-bucket.yaml` | Inputs/patterns match your naming; refs match tags you actually publish |
+| `templates/s3-bucket/*.tmpl` | `source = "git::…"` points at **your** module remotes (§2a) |
+| `.github/ISSUE_TEMPLATE/s3-bucket.yml` | Fields match catalog; **`labels: []`** if control is public |
+
+After editing templates, render once locally (or rely on control `ci`) and confirm the output `main.tf` has the git URLs you expect.
+
+### 4.5 Bootstrap labels
+
+```bash
+./scripts/bootstrap-labels.sh OWNER/gh-platform-control
+```
+
+Creates `issueops`, `product:s3-bucket`, `status:*`, etc.  
+**UI check:** Issues → Labels.
+
+### 4.6 Control tracking Environments (UI)
+
+1. Control repo → **Settings** → **Environments** → **New environment**.  
+2. Name exactly `issueops-dev` (and `issueops-prod` when you use prod).  
+3. **Do not** configure AWS secrets here.  
+4. **Do not** create bare `dev` / `prod` on control — those names belong on workloads.
+
+### 4.7 Local / CI sanity on control
+
+```bash
+ALLOW_PLACEHOLDERS=1 ./scripts/validate-control.sh
+./scripts/validate-pins.sh
+```
+
+Push to `main` (or merge PR). Confirm Actions → `ci` is green.
+
+## 5. Configure each workload
+
+Repeat for `infra-dev` first; mirror for `infra-prod` later.
+
+### 5.1 Caller workflow `tofu.yml`
+
+Edit `.github/workflows/tofu.yml`:
+
+1. `uses: OWNER/gh-platform-actions/.github/workflows/tofu-pipeline.yml@<SAME_SHA_AS_pins.yaml>`  
+2. `environment: dev` (or `prod`)  
+3. `aws_role_arn: arn:aws:iam::ACCOUNT:role/gh-platform-dev`  
+4. `aws_region:` matches registry  
+5. Permissions + secret mapping:
+
+```yaml
+permissions:
+  contents: read
+  id-token: write
+  actions: write          # plan artifact between jobs
+# on the job that calls the reusable workflow:
+secrets:
+  modules_git_token: ${{ secrets.MODULES_GIT_TOKEN }}
+```
+
+PR = `command: plan`. Push to `main` = `command: apply` + `confirm_apply: APPLY`.
+
+### 5.2 Module read token on the workload (UI + CLI)
+
+Needed so `tofu init` can clone **every** private module remote your templates reference (one monorepo or many).
+
+1. GitHub → **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained** → **Generate**.  
+2. Resource owner = your org. Repository access = **Only select** → each module repo the stack will fetch (§2a).  
+3. Permissions → **Contents: Read-only**. Generate; copy once.  
+4. On **workload** → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**  
+   - Name: `MODULES_GIT_TOKEN` (or whatever `tofu.yml` passes as `modules_git_token`)  
+   - Value: the token  
+
+```bash
+gh secret set MODULES_GIT_TOKEN -R OWNER/infra-dev
+```
+
+**Copy/paste class:** Requires modification — `OWNER` + token from stdin/`gh`; Contents: Read only on module remotes.
+
+Prefer a machine user / org fine-grained token with expiry in production (§9).
+
+### 5.3 Deploy Environment on the workload (UI)
+
+1. `infra-dev` → **Settings** → **Environments** → **New environment** → name `dev`.  
+2. Optional on lab: no reviewers.  
+3. On production `prod` Environment: **Required reviewers** (at least one human); limit to self-hosted or GitHub-hosted as you prefer; enable **Wait timer** if you want a cool-down.  
+4. Deployment branches: restrict to `main` for apply.
+
+This Environment name must match `github_environment` in `environments.yaml` and the `environment:` input in `tofu.yml` — it is also what the cloud OIDC `sub` should match (AWS demo below).
+
+### 5.4 Branch protection / rulesets (UI)
+
+On **each** of control, actions, modules, `infra-*`:
+
+1. **Settings** → **Rules** → **Rulesets** → **New branch ruleset**.  
+2. Target: `main`.  
+3. Enable: Restrict updates; Require pull request (≥1 approval); Block force pushes; Restrict deletions; Require linear history (recommended).  
+4. Require status checks once CI names are stable (`ci` on control; `tofu` / pipeline jobs on workloads).  
+5. CODEOWNERS for `config/pins.yaml` on control.
+
+Minimum ruleset idea: target `main`; require PR + 1 approval; block force push; require status checks once CI names are stable; CODEOWNERS on `config/pins.yaml` and workload `uses:` lines.
+
+## 6. AWS OIDC and state backend
+
+Control IssueOps does **not** need AWS credentials. Only workloads do.
+
+### 6.1 OIDC provider (once per AWS account)
+
+In AWS IAM → **Identity providers** → **Add provider**:
+
+- Provider type: **OpenID Connect**  
+- URL: `https://token.actions.githubusercontent.com`  
+- Audience: `sts.amazonaws.com`  
+
+### 6.2 IAM role trust (per env)
+
+Create role `gh-platform-dev` (name must match what you put in YAML). Trust policy shape:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": "repo:OWNER/infra-dev:environment:dev"
+        }
+      }
+    }
+  ]
+}
+```
+
+Use `StringEquals` for a fully concrete `sub`. Prefer `StringLike` only when you intentionally need a suffix wildcard — and never `repo:OWNER/*` or control. Tighten further with `job_workflow_ref` if your org requires it. **Never** trust `repo:OWNER/gh-platform-control:*`.
+
+**Copy/paste class:** Requires modification — replace `OWNER`, account id in the Federated ARN, and role name.
+
+Permissions on the role — starter outline for the S3 golden path + state (still **Requires modification**; attach your org SCPs / encryption baselines):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "StateBucket",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::YOUR-TFSTATE-BUCKET"]
+    },
+    {
+      "Sid": "StateObjects",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": ["arn:aws:s3:::YOUR-TFSTATE-BUCKET/stacks/*"]
+    },
+    {
+      "Sid": "ManageProductBuckets",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:Get*",
+        "s3:Put*",
+        "s3:List*",
+        "s3:DeleteObject"
+      ],
+      "Resource": ["arn:aws:s3:::YOUR-PREFIX-*", "arn:aws:s3:::YOUR-PREFIX-*/*"]
+    }
+  ]
+}
+```
+
+Lab-incomplete on purpose: no `iam:*`, no account-wide `s3:*`. Narrow `YOUR-PREFIX` to what IssueOps may create; add KMS / DynamoDB lock table actions if your backend uses them. Separate break-glass role for emergencies.
+
+### 6.3 State backend
+
+1. Create an S3 bucket for state in that account (block public access on).  
+2. Enable locking (`use_lockfile` and/or DynamoDB per your OpenTofu version/practice).  
+3. Generated stacks include `backend "s3" {}` + `backend.hcl` skeleton — wire real bucket/key via Actions variables or secured backend config **not** committed with secrets.  
+4. Suggested key layout: `stacks/<stack_id>/terraform.tfstate`.  
+
+Until AWS exists, local state is fine for dry validation only — do not pretend that is production.
+
+### 6.4 Keep registry + workflow in sync
+
+After role ARN exists:
+
+1. Put ARN in control `config/environments.yaml`.  
+2. Put **same** ARN in workload `tofu.yml` `aws_role_arn`.  
+3. Merge both.
+
+## 7. First smoke test
+
+Use a disposable bucket name you will destroy later.
+
+1. Confirm **you** are in `operators.yaml`.  
+2. Control → **Issues** → **New issue** → **Provision S3 bucket**.  
+3. Fill `environment=dev`, unique `bucket_name`, `project`, versioning. Submit.  
+4. Confirm **no** Actions run yet (empty labels).  
+5. Add labels: `issueops` + `product:s3-bucket`.  
+6. Actions → `issue-provision` → expect green; issue comment with PR URL; label `status:pr-open`.  
+7. Open private workload PR → expect `validate` + `plan` green (Checkov/Conftest).  
+8. Merge → Environment `dev` apply runs.  
+9. Confirm bucket exists; then destroy via controlled process (workload PR / destroy path if you enable it).  
+
+If step 6 fails, check [provision footguns](/posts/github-idp-issueops-part-3/#7-footguns) and this quick table:
+
+| Symptom | Likely fix |
+| --- | --- |
+| Nothing runs after submit | Missing `issueops` / `product:*` labels |
+| Authorization failed | Author not in `operators.yaml` and no write on control |
+| `status:config-error` | App var/secret missing on **control** |
+| PR create failed | App missing Pull requests: write on workload; re-accept install |
+| `tofu init` can’t fetch modules | Token missing repos from §2a; wrong `source` URL in template |
+| Duplicate validation-failed | Natural key claimed — close/merge old claim or new name |
+
+### Optional: status-sync
+
+Labels `status:plan-ok` / `status:applied` need workload → control `repository_dispatch` (`issueops_status`). Starter `tofu.yml` does **not** wire this yet — see [the provision path](/posts/github-idp-issueops-part-3/#5-status-sync). Wire before you rely on those labels in dashboards.
+
+## 8. Extend — pins, products, envs
+
+### 8.1 Bump actions SHA
+
+1. Merge pipeline change on `gh-platform-actions`; copy commit SHA.  
+2. PR on control: `config/pins.yaml` → `actions.ref`.  
+3. PR on **every** `infra-*`: `tofu.yml` `uses: …@<sha>`.  
+4. `./scripts/validate-pins.sh`.  
+5. Smoke plan on `infra-dev`.
+
+### 8.2 Bump a module ref (new requests only)
+
+1. Release your usual tag on the module remote (`v1.3.0` or `s3/v1.1.0` — whatever you already do).  
+2. PR on control: template/`catalog` `ref` (and `pins.yaml` only if you still use a shared default).  
+3. **Existing stacks keep old `?ref=`** — bump with an explicit workload PR.
+
+### 8.3 Add a product
+
+Point the new product at a module tag you already ship (e.g. `rds/v1.0.0` on your modules repo).
+
+1. `config/catalog/products/<id>.yaml` — inputs, patterns, `module.path`/`ref`, `stack_id_from`, `uniqueness_key_from`.  
+2. `templates/<id>/*.tmpl`.  
+3. `.github/ISSUE_TEMPLATE/<id>.yml` with **`labels: []`** if control is public.  
+4. Extend `issue-provision.yml` `if:` (or generalize on `product:<id>`).  
+5. Extend `check_duplicate_resource.py` if natural key ≠ `bucket_name`.  
+6. `./scripts/bootstrap-labels.sh` for `product:<id>`.  
+7. Document for operators; smoke on dev.
+
+### 8.4 Add an environment
+
+1. Create `infra-<env>` from example; keep **private**.  
+2. OIDC + backend + Environment + `MODULES_GIT_TOKEN` (§5–§6).  
+3. Install GitHub App on that repo (§3.2).  
+4. Row in `config/environments.yaml`.  
+5. Add dropdown option on Issue Forms.  
+6. Control tracking Environment `issueops-<env>`.  
+7. Smoke one request.  
+
+Keep **one** control plane — don’t fork control per team for MVP.
+
+## 9. Production readiness and security
+
+The public demo is intentionally thin. Treat the list below as the bar before real users and real prod accounts. Demo controls are the floor, not the ceiling.
+
+### 9.1 Demo vs production posture
+
+| Topic | Demo (my public control) | Production target |
+| --- | --- | --- |
+| Control visibility | Public OK for teaching | **Private** (or Enterprise with strict access) |
+| Form labels | `labels: []` + manual label | Still empty **or** only trusted collab; never auto-label for broad audiences |
+| Operators | Small allowlist | Allowlist + SSO-backed teams; remove demos after talks |
+| Workloads | Private | Private; no outside collaborators |
+| Modules | May be public | Private; token least-privilege |
+| Prod apply | Often unused | Required reviewers + separate account |
+| status-sync | Optional / unwired | Wired or consciously accepted gap |
+
+### 9.2 Identity and authz
+
+1. **Make control private** unless you have a documented reason for public Issues.  
+2. Keep `labels: []` on forms until you have a triage bot you trust.  
+3. Prefer **org teams** in `operators.yaml` / collaborator model over a long flat list of personal logins (adapt the authorize script if you move to team membership checks).  
+4. Turn on **SSO / SAML** for the GitHub org; require 2FA.  
+5. For public demos only: GitHub **Settings → Moderation → Interaction limits** during the talk window.  
+6. Remember authz is on **issue author** — a stranger’s issue labeled by you still fails unless you re-file or allowlist them.
+
+### 9.3 GitHub App hardening
+
+1. Install **only** on `infra-*` repos — never “all repositories.”  
+2. Permissions stay Contents + Pull requests (+ Metadata). No Administration, no Actions write on workloads via this App unless you have a separate design.  
+3. Store PEM only in control Actions secrets; rotate on staff change or suspicion: generate new key → update `CONTROL_APP_PRIVATE_KEY` → revoke old key on the App.  
+4. Disable unused App features (webhooks, user-to-server if unused).  
+5. Periodically audit **Installations** list.
+
+### 9.4 Secrets and tokens
+
+1. `MODULES_GIT_TOKEN`: fine-grained, **Contents:read** on modules only; expire ≤90 days; own it with a machine user.  
+2. No long-lived AWS access keys in GitHub — OIDC only.  
+3. Never commit PEM, tokens, account-wide admin keys, or backend credentials.  
+4. Enable secret scanning + push protection on all platform repos.  
+5. Restrict who can edit Actions secrets (org owners / repo admins only).
+
+### 9.5 AWS and apply path
+
+1. **Separate AWS accounts** for `dev` and `prod`.  
+2. OIDC `sub` locked to `repo:OWNER/infra-<env>:environment:<env>` — not `*` and not control.  
+3. IAM policies least-privilege per product family; deny broad `*` outside break-glass roles.  
+4. State bucket: block public access, encrypt, limit principals to the deploy role + break-glass.  
+5. Prod GitHub Environment: **required reviewers**, deployment branch = `main`, optional wait timer.  
+6. No apply from control. No shared “god role” across accounts.
+
+### 9.6 Supply chain (Actions + modules)
+
+1. Enforce `validate-pins.sh` in CI; reject `main`/`latest`/`HEAD`.  
+2. CODEOWNERS + required review on `config/pins.yaml` and workload `tofu.yml` `uses:` lines.  
+3. Pin third-party Actions to full SHAs inside `gh-platform-actions` (already the house style).  
+4. Prefer private modules; if public, still pin tags and review releases.  
+5. After pipeline changes, roll SHA to workloads deliberately — don’t leave examples and live repos divergent.
+
+### 9.7 Repository governance
+
+1. Rulesets on `main` for control, actions, every `infra-*`, and each module remote you own (§5.4).  
+2. Squash merge + linear history.  
+3. Require status checks: control `ci`; workload plan jobs.  
+4. CODEOWNERS for catalog, templates, workflows, pins.  
+5. Disable forking of private workloads if org policy allows.  
+6. Short-lived feature branches into `main` via PR — no direct pushes.
+
+### 9.8 Runtime policy and observability
+
+1. Keep Checkov + Conftest gates mandatory (no “continue on error”).  
+2. Add org-specific Conftest policies (tags, encryption, public access) before prod.  
+3. Wire `status-sync` or an equivalent so operators see plan/apply outcomes on the issue.  
+4. Export Actions audit log / org audit log to your SIEM if you have one.  
+5. Alert on `status:provision-failed`, repeated `validation-failed`, and App permission errors.
+
+### 9.9 Operational hygiene
+
+1. Confirm operators list, pins SHA == workload `uses:`, App installs, and module token scope still match reality.  
+2. Close abandoned `status:pr-open` claims so natural keys free up.  
+3. Remove demo users from `operators.yaml` after public talks.  
+4. Break-glass: workload PR only; App key rotation steps written down.  
+5. Practice a pin-bump and a prod Environment approval in a game day.
+
+### 9.10 Explicit non-goals for “production” in this architecture
+
+- Multi-tenant SaaS for untrusted internet users on a public control repo  
+- Automatic apply to prod without human Environment approval  
+- Trusting AWS inventory as uniqueness source of truth (Git remains SoT)  
+
+If you need a public self-service portal for strangers, you need additional product security (abuse rate limits, billing, stronger identity) — not just this IssueOps MVP.
+
+## 10. Full verification checklist
+
+### Lab ready
+
+| # | Check |
+| --- | --- |
+| 1 | Intake + pipeline + private `infra-dev` exist; module remotes reachable |
+| 2 | App installed on `infra-dev` with Contents + PR write |
+| 3 | `CONTROL_CLIENT_ID` + `CONTROL_APP_PRIVATE_KEY` on **control** only |
+| 4 | `operators.yaml` contains your login |
+| 5 | `environments.yaml` + `tofu.yml` share the same role ARN |
+| 6 | `pins.yaml` SHA == workload `uses:` SHA; validate-pins passes |
+| 7 | Labels bootstrapped; form `labels: []` |
+| 8 | Control Environments are `issueops-*` only |
+| 9 | Workload Environment `dev` exists; `MODULES_GIT_TOKEN` set |
+| 10 | OIDC trust `sub` matches `repo:OWNER/infra-dev:environment:dev` |
+| 11 | Smoke: form → labels → `status:pr-open` → plan → apply |
+
+### Production ready (add to lab)
+
+| # | Check |
+| --- | --- |
+| 12 | Control private (or documented exception) |
+| 13 | Rulesets + CODEOWNERS on pins and workflows |
+| 14 | Secret scanning + push protection on |
+| 15 | Prod account + `infra-prod` + Environment required reviewers |
+| 16 | App installation audited; PEM rotation tested |
+| 17 | `MODULES_GIT_TOKEN` is fine-grained + expiring |
+| 18 | Conftest policies cover your org baselines |
+| 19 | status-sync wired or gap accepted in writing |
+| 20 | Demo operators removed; Interaction limits understood |
+
+## 11. FAQ
+
+**Can I run OpenTofu inside control?**  
+No. Break-glass: PR on `infra-<env>` through the same pipeline.
+
+**Do I install the GitHub App on control?**  
+No for IssueOps. Install on workloads; store credentials on control.
+
+**Is public control production-ready for strangers?**  
+No. Use §9. Public + empty labels + allowlist is a **demo** posture.
+
+**Do I need Backstage?**  
+Not for this path. Sibling K8s/Backstage IDP can coexist.
+
+**Where do modules live?**  
+Wherever you already release them — one repo per module or a monorepo. Templates pin `git::…?ref=…`; see §2a.
+
+**Do I have to adopt `gh-platform-modules`?**  
+No. That’s my demo library. Point templates at your remotes.
+
+**Is this AWS-only?**  
+No. S3 on AWS is the worked example. The IssueOps + GitOps shape is for any product you catalog and any cloud (or none) your modules already speak.
+
+**Can the next product be something other than S3?**  
+Yes. That’s the point. Form + catalog YAML + templates + pin. Same pipeline. Slightly less exciting screenshots.
+
+## What’s next
+
+**Done in this post:** bootstrap order, App + secrets, control/workload config, OIDC/backend (AWS demo), smoke test, pin/product/env extension, production hardening checklist.
+
+**Next for you:** run the verification checklist on your org, then add the next golden-path product the same way — S3 was just the first one that made a good demo.
