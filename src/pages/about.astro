@@ -1,10 +1,12 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+
+const base = import.meta.env.BASE_URL;
 ---
 
 <BaseLayout
   title="About"
-  description="About Ravichandra — platform engineer across AWS, Azure, and GCP."
+  description="Ravichandra — platform engineer across AWS, Azure, and GCP. Field notes on GitOps, Kubernetes, and IaC at cloud-dispatch."
   path="/about/"
 >
   <article class="prose">
@@ -22,12 +24,21 @@ import BaseLayout from "../layouts/BaseLayout.astro";
       behind each decision.
     </p>
     <p>
+      Start with the <a href={`${base}posts/`}>notes</a> if you want the field write-ups.
+    </p>
+    <p>
       GitHub:
-      <a href="https://github.com/ravichandrapatel">github.com/ravichandrapatel</a>
+      <a
+        href="https://github.com/ravichandrapatel"
+        rel="me noopener noreferrer"
+        >github.com/ravichandrapatel</a
+      >
     </p>
     <p>
       LinkedIn:
-      <a href="https://www.linkedin.com/in/ravichandra-ch"
+      <a
+        href="https://www.linkedin.com/in/ravichandra-ch"
+        rel="me noopener noreferrer"
         >linkedin.com/in/ravichandra-ch</a
       >
     </p>
