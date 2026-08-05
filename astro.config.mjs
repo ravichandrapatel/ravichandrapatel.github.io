@@ -4,24 +4,43 @@ import react from "@astrojs/react";
 import mdx from "@astrojs/mdx";
 import sitemap from "@astrojs/sitemap";
 import tailwindcss from "@tailwindcss/vite";
-import { copyFile, access } from "node:fs/promises";
+import { readFile, writeFile, access } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-/** Alias /sitemap.xml → sitemap-index.xml so GSC's common default URL works. */
+/**
+ * Emit a clean /sitemap.xml urlset for Google Search Console.
+ * Astro's sitemap-index + sitemap-0 (with unused news/image/video xmlns) often
+ * surfaces as "Sitemap could not be read" for small sites.
+ */
 function sitemapXmlAlias() {
   return {
     name: "sitemap-xml-alias",
     hooks: {
       "astro:build:done": async ({ dir }) => {
         const out = fileURLToPath(dir);
-        const indexPath = path.join(out, "sitemap-index.xml");
+        const childPath = path.join(out, "sitemap-0.xml");
         const aliasPath = path.join(out, "sitemap.xml");
         try {
-          await access(indexPath);
-          await copyFile(indexPath, aliasPath);
+          await access(childPath);
+          const raw = await readFile(childPath, "utf8");
+          const locs = [...raw.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+          if (locs.length === 0) return;
+          const lastmod = new Date().toISOString().slice(0, 10);
+          const body = locs
+            .map(
+              (loc) =>
+                `  <url>\n    <loc>${loc}</loc>\n    <lastmod>${lastmod}</lastmod>\n  </url>`,
+            )
+            .join("\n");
+          const xml =
+            `<?xml version="1.0" encoding="UTF-8"?>\n` +
+            `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+            `${body}\n` +
+            `</urlset>\n`;
+          await writeFile(aliasPath, xml, "utf8");
         } catch {
-          // No index yet (empty site) — skip alias.
+          // No child sitemap yet — skip.
         }
       },
     },
