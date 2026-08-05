@@ -4,7 +4,7 @@ description: "Bootstrap every repo, secret, and config for a GitHub-only IDP (in
 pubDate: 2026-08-11T13:30:00.000Z
 updatedDate: 2026-08-12T14:10:00.000Z
 tags: [github-actions, issueops, idp, platform-engineering, github, howto, security, notes]
-draft: false
+draft: true
 cover: /posts/github-idp/cover-04.svg
 ---
 
@@ -14,7 +14,7 @@ cover: /posts/github-idp/cover-04.svg
 
 ## 0. Assumes and prerequisites
 
-Prior posts: [architecture](/posts/github-idp-issueops-part-1/), [operator UX](/posts/github-idp-issueops-part-2/), [machine path](/posts/github-idp-issueops-part-3/).
+Prior posts: [architecture](/notes/github-idp-issueops-part-1/), [operator UX](/notes/github-idp-issueops-part-2/), [machine path](/notes/github-idp-issueops-part-3/).
 
 This post is the stand-up and harden runbook. You already release OpenTofu/Terraform modules (one repo or many). Here you wire intake + pipeline + workloads to call them — you don’t rebuild your module farm. I’m not here to convert you to a new IaC religion.
 
@@ -128,7 +128,7 @@ Do not migrate modules into a monorepo just to adopt IssueOps. Change the templa
 
 ## 3. GitHub App — create, install, credentials
 
-Split of duties ([App install vs credentials](/posts/github-idp-issueops-part-1/#d7--app-install-on-workloads-credentials-on-control)):
+Split of duties ([App install vs credentials](/notes/github-idp-issueops-part-1/#d7--app-install-on-workloads-credentials-on-control)):
 
 - **Install** App on **workload** repos (where PRs are written).  
 - **Store** Client ID + private key on **control** (where mint runs).  
@@ -460,7 +460,7 @@ Use a disposable bucket name you will destroy later.
 8. Merge → Environment `dev` apply runs.  
 9. Confirm bucket exists; then destroy via controlled process (workload PR / destroy path if you enable it).  
 
-If step 6 fails, check [provision footguns](/posts/github-idp-issueops-part-3/#7-footguns) and this quick table:
+If step 6 fails, check [provision footguns](/notes/github-idp-issueops-part-3/#7-footguns) and this quick table:
 
 | Symptom | Likely fix |
 | --- | --- |
@@ -473,7 +473,7 @@ If step 6 fails, check [provision footguns](/posts/github-idp-issueops-part-3/#7
 
 ### Optional: status-sync
 
-Labels `status:plan-ok` / `status:applied` need workload → control `repository_dispatch` (`issueops_status`). Starter `tofu.yml` does **not** wire this yet — see [the provision path](/posts/github-idp-issueops-part-3/#5-status-sync). Wire before you rely on those labels in dashboards.
+Labels `status:plan-ok` / `status:applied` need workload → control `repository_dispatch` (`issueops_status`). Starter `tofu.yml` does **not** wire this yet — see [the provision path](/notes/github-idp-issueops-part-3/#5-status-sync). Wire before you rely on those labels in dashboards.
 
 ## 8. Extend — pins, products, envs
 

@@ -98,7 +98,7 @@ server:
               runAsUser: 1000
             containers:
               - name: init
-                image: quay.io/hashicorp/vault:1.17
+                image: hashicorp/vault:2.0.3
                 securityContext:
                   allowPrivilegeEscalation: false
                   capabilities: { drop: ["ALL"] }

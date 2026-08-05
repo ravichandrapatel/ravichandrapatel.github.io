@@ -11,6 +11,10 @@ export default defineConfig({
   site: "https://ravichandrapatel.github.io",
   base: "/",
   trailingSlash: "always",
+  redirects: {
+    "/posts": "/notes/",
+    "/posts/[...slug]": "/notes/[...slug]",
+  },
   integrations: [
     react(),
     mdx(),

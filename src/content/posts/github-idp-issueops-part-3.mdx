@@ -4,7 +4,7 @@ description: "What issue-provision does after labels land — App tokens vs GITH
 pubDate: 2026-08-07T13:30:00.000Z
 updatedDate: 2026-08-12T13:30:00.000Z
 tags: [github-actions, issueops, idp, platform-engineering, github, testing, notes]
-draft: false
+draft: true
 cover: /posts/github-idp/cover-03.svg
 ---
 
@@ -14,11 +14,11 @@ cover: /posts/github-idp/cover-03.svg
 
 ## 0. Assumes
 
-[Issue Forms & the public gate](/posts/github-idp-issueops-part-2/) is the human path. This post is **what the machine does** once the labels land — and why each stage exists.
+[Issue Forms & the public gate](/notes/github-idp-issueops-part-2/) is the human path. This post is **what the machine does** once the labels land — and why each stage exists.
 
 I’ll walk it with the demo product: `issueops` + `product:s3-bucket` (S3 on AWS in my lab). Swap the product id and templates — or the cloud behind the modules — and the stages don’t grow a new personality. Control still never holds apply power.
 
-By the time a PR opens, the rendered stack already has normal module `source`/`ref` lines for **what you already ship** — one modules monorepo or one-repo-per-module, AWS or not. Control fills templates; it doesn’t become your module factory ([modules library](/posts/github-idp-issueops-part-1/#44-gh-platform-modules--the-iac-library)). Good. I don’t want a second career writing everyone else’s modules.
+By the time a PR opens, the rendered stack already has normal module `source`/`ref` lines for **what you already ship** — one modules monorepo or one-repo-per-module, AWS or not. Control fills templates; it doesn’t become your module factory ([modules library](/notes/github-idp-issueops-part-1/#44-gh-platform-modules--the-iac-library)). Good. I don’t want a second career writing everyone else’s modules.
 
 ## 1. issue-provision step by step
 
@@ -80,7 +80,7 @@ modules:
 
 **Copy/paste class:** Demonstration only for the SHA values above — pin *your* actions/modules refs. Shape is safe to copy.
 
-Catalog product pin for S3 is separate (`module.ref: s3/v1.0.0` in `config/catalog/products/s3-bucket.yaml`). How to bump pins safely: [bump pins](/posts/github-idp-issueops-part-4/#8-extend--pins-products-envs).
+Catalog product pin for S3 is separate (`module.ref: s3/v1.0.0` in `config/catalog/products/s3-bucket.yaml`). How to bump pins safely: [bump pins](/notes/github-idp-issueops-part-4/#8-extend--pins-products-envs).
 
 Control CI (`ci.yml`) smoke-tests parse → validate → render with a fake issue body — no App, no cloud credentials.
 
@@ -110,9 +110,9 @@ Mint step (pinned action SHA):
 
 Footgun I hit: App with Contents write but **without** Pull requests write → branch pushes, `gh pr create` fails → `status:provision-failed` after a green validate.
 
-How to create the App and set secrets: [stand-up & harden](/posts/github-idp-issueops-part-4/#3-github-app--create-install-credentials).
+How to create the App and set secrets: [stand-up & harden](/notes/github-idp-issueops-part-4/#3-github-app--create-install-credentials).
 
-**Tracking Deployments** use `issueops-dev` / `issueops-prod` — status only. Real Environments + OIDC live on `infra-*` ([Issue Forms & the public gate](/posts/github-idp-issueops-part-2/#6-tracking-vs-deploy-environments)).
+**Tracking Deployments** use `issueops-dev` / `issueops-prod` — status only. Real Environments + OIDC live on `infra-*` ([Issue Forms & the public gate](/notes/github-idp-issueops-part-2/#6-tracking-vs-deploy-environments)).
 
 ## 3. Natural-key uniqueness
 
@@ -193,7 +193,7 @@ I also lean on control CI: `validate-control.sh`, pin checks, parse/validate/dup
 
 ## 7. Footguns
 
-These are **path** footguns (operating the machine). Bootstrap mistakes are in [stand-up & harden](/posts/github-idp-issueops-part-4/).
+These are **path** footguns (operating the machine). Bootstrap mistakes are in [stand-up & harden](/notes/github-idp-issueops-part-4/).
 
 **App missing `pull_requests: write`.** Validate looks fine; PR step dies.
 
@@ -221,4 +221,4 @@ These are **path** footguns (operating the machine). Bootstrap mistakes are in [
 
 **Done in this post:** `issue-provision` stages, App vs `GITHUB_TOKEN`, natural-key uniqueness, `tofu-pipeline`, status-sync, footguns.
 
-**Next:** [Wire it up and harden](/posts/github-idp-issueops-part-4/) — ordered bootstrap (repos, App, every config file, OIDC/backend, Environments) and production security.
+**Next:** [Wire it up and harden](/notes/github-idp-issueops-part-4/) — ordered bootstrap (repos, App, every config file, OIDC/backend, Environments) and production security.

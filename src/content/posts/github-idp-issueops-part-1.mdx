@@ -4,7 +4,7 @@ description: "GitHub-only internal developer portal — four-repo layout, trust 
 pubDate: 2026-08-05T13:30:00.000Z
 updatedDate: 2026-08-12T13:30:00.000Z
 tags: [github-actions, issueops, idp, platform-engineering, github, architecture, notes]
-draft: false
+draft: true
 cover: /posts/github-idp/cover-01.svg
 ---
 
@@ -105,7 +105,7 @@ These posts are the **build log for a concrete GitHub-only IDP** I actually run.
 
 **Intake is an Issue Form.** In the demo, a developer opens **Issues → Provision S3 bucket**, fills fields, and submits. Labels (`issueops` + `product:*`) start automation. Your next form might say “Provision Postgres” or “Request a DNS name.” Same machine. No separate portal host — the box they open is already GitHub. Fancy.
 
-The four-repo cut and Rule #2 (control never assumes cloud roles) are in the [glance](#architecture-at-a-glance). Pins, natural keys, and public-demo gates — empty form labels + `operators.yaml` — are the product decisions that make IssueOps safe to demo and to harden later ([stand-up & harden](/posts/github-idp-issueops-part-4/)).
+The four-repo cut and Rule #2 (control never assumes cloud roles) are in the [glance](#architecture-at-a-glance). Pins, natural keys, and public-demo gates — empty form labels + `operators.yaml` — are the product decisions that make IssueOps safe to demo and to harden later ([stand-up & harden](/notes/github-idp-issueops-part-4/)).
 
 ## 4. The four repos in detail
 
@@ -165,7 +165,7 @@ What each remote owns. Flow diagram is in the glance above — toggle **Trust** 
 
 ### 4.5 How a request crosses the seams
 
-High-level only (machine detail in [the provision path](/posts/github-idp-issueops-part-3/)):
+High-level only (machine detail in [the provision path](/notes/github-idp-issueops-part-3/)):
 
 1. Issue lands on control (maybe unlabeled on a public demo).  
 2. Labels `issueops` + `product:<id>` start `issue-provision`.  
@@ -307,7 +307,7 @@ The later posts assume these. If you violate #2, you are not running this archit
 
 ## 8. Config map — what lives where
 
-File roles on control (how to fill them is [stand-up & harden](/posts/github-idp-issueops-part-4/)):
+File roles on control (how to fill them is [stand-up & harden](/notes/github-idp-issueops-part-4/)):
 
 | Path | What it is | Who changes it |
 | --- | --- | --- |
@@ -334,7 +334,7 @@ Canonical short write-up: [ARCHITECTURE.md](https://github.com/ravichandrapatel/
 ## 9. What this is not
 
 - **Not** an “AWS portal.” The demo product is S3 on AWS. The pattern is IssueOps + GitOps for whatever modules you already ship.  
-- **Not** a multi-tenant SaaS portal for strangers on the internet. Public control needs gates — harden before real users ([stand-up & harden](/posts/github-idp-issueops-part-4/#9-production-readiness-and-security)).  
+- **Not** a multi-tenant SaaS portal for strangers on the internet. Public control needs gates — harden before real users ([stand-up & harden](/notes/github-idp-issueops-part-4/#9-production-readiness-and-security)).  
 - **Not** the K8s/Backstage IDP. Sibling plane. I keep those stories separate on purpose.  
 - **Not** ClickOps as the happy path. Break-glass is still a Git PR on the workload — even at 2 a.m. Especially at 2 a.m.
 
@@ -342,7 +342,7 @@ Canonical short write-up: [ARCHITECTURE.md](https://github.com/ravichandrapatel/
 
 **Done in this post:** architecture at a glance, vocabulary, four-repo deep dive, themed decision log, trust boundaries, hard rules.
 
-**Next:** [Issue Forms, labels, and the public gate](/posts/github-idp-issueops-part-2/) — how an operator actually uses the portal in practice.
+**Next:** [Issue Forms, labels, and the public gate](/notes/github-idp-issueops-part-2/) — how an operator actually uses the portal in practice.
 
 ### Related reading
 

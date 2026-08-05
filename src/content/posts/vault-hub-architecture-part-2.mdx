@@ -1,0 +1,964 @@
+---
+title: "Building a Multi-Tenant HashiCorp Vault OSS Hub — Part 2: Does any of this actually work?"
+description: "Kind lab on WSL2 for the Part 1 Vault Hub design — JWT login, allow/deny check, External Secrets — with real command output."
+pubDate: 2026-08-05T04:00:00.000Z
+updatedDate: 2026-08-05T07:45:00.000Z
+tags: [vault, vault-oss, kubernetes, secrets, multi-tenant, metadata-policy, notes, kind, eso]
+draft: false
+cover: /posts/vault-hub/cover.svg
+---
+
+import VaultK8sAuthFlow from "../../components/diagrams/VaultK8sAuthFlow.tsx";
+import Callout from '../../components/callOut.tsx';
+
+[Part 1](/notes/vault-hub-architecture/) was the plan on paper — shared policy, identity metadata, one JWT mount per cluster with live OIDC instead of TokenReview. On paper it looked solid. Plans always do. This post is the lab run that either backs that plan up or shows where it falls over.
+
+The setup is a hub and a spoke on kind under WSL2. No `lab-configure.sh` autopilot — every Vault command is typed out so failure modes stay visible. Tools for this run:
+
+- kind, kubectl, Helm 3, Docker on WSL2
+- Vault OSS **2.0.3** (Helm chart **0.34.0**)
+- External Secrets Operator **v2.8.0** (chart **2.8.0**)
+
+Scripts and manifests live under [`docs/vault-hub/`](https://github.com/ravichandrapatel/docs-and-adr/tree/main/docs/vault-hub). Root token and unseal keys stay in `.lab-secrets/` (gitignored) and are not pasted here. Shamir is lab-only. Demo values like `s3cret-demo` are fake.
+
+### Quick recap of the Part 1 example
+
+Part 1 carried one small example so the design stayed same:
+
+- **OU:** `test1` (KV prefix `test1-ou`)
+- **BUs:** `finance` and `retail`
+- **Apps:** `payment-api` under finance, `oms` under retail
+- **Env:** `prod`
+
+Path shape is `{ou}-ou/{bu}/{app}/{env}` — for example `test1-ou/finance/payment-api/prod` and `test1-ou/retail/oms/prod`. Same Vault, same shared policy. Identity metadata is what tells them apart: **payment-api** reads its own secrets; a reach for **oms** should return 403.
+
+Those names stay for the rest of this post.
+
+## What i will build
+
+<VaultK8sAuthFlow client:load />
+
+The spoke gets a dedicated JWT mount at `auth/k8s-prod`. On real EKS, GKE, or AKS, `oidc_discovery_url` against the cluster issuer is enough. Kind has no public issuer the hub can reach, so a small JWKS publisher runs on the spoke and Vault is configured with `jwks_url` + `bound_issuer` instead.
+
+Same verify path as cloud. Extra plumbing only because kind forces it.
+
+The chain that has to hold: pod JWT → login on that mount → Identity Entity that already has metadata → shared policy expands → **payment-api** is allowed, **oms** is denied. If that lands, Part 1 was not just diagrams.
+
+## Create the kind lab
+
+`lab-up.sh` creates both kind clusters, installs Vault on the hub, unseals it, and drops the **payment-api** service account plus the JWKS publisher on the spoke. Hub shape: 1 control plane + **3** workers. Spoke: one node. The worker count matters.
+
+**Issue-1:** A "normal" 3-node kind cluster is only 1 control plane + 2 workers, and the control plane is tainted. Vault anti-affinity wants three schedulable workers, so one Raft pod stays Pending forever. Three workers. Skip that and the lab never gets past install.
+
+**Issue-2:** `too many open files` on kind nodes once Raft and kube-proxy get busy. Raise inotify before going further:
+
+```bash
+for n in $(kind get nodes --name vault-hub) $(kind get nodes --name vault-spoke); do
+  docker exec "$n" sysctl -w fs.inotify.max_user_watches=524288
+  docker exec "$n" sysctl -w fs.inotify.max_user_instances=1024
+done
+```
+
+```text
+fs.inotify.max_user_watches = 524288
+fs.inotify.max_user_instances = 1024
+fs.inotify.max_user_watches = 524288
+fs.inotify.max_user_instances = 1024
+fs.inotify.max_user_watches = 524288
+fs.inotify.max_user_instances = 1024
+fs.inotify.max_user_watches = 524288
+fs.inotify.max_user_instances = 1024
+fs.inotify.max_user_watches = 524288
+fs.inotify.max_user_instances = 1024
+```
+
+Then bring the lab up. Kind + Helm + unseal takes a few minutes on a laptop:
+
+```bash
+./scripts/lab-up.sh
+```
+
+```text
+==> kind hub (vault-hub, 3 nodes)
+    creating kind cluster vault-hub
+Creating cluster "vault-hub" ...
+ • Ensuring node image (kindest/node:v1.35.0) 🖼  ...
+ ✓ Ensuring node image (kindest/node:v1.35.0) 🖼
+ • Preparing nodes 📦 📦 📦 📦   ...
+ ✓ Preparing nodes 📦 📦 📦 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+ • Joining worker nodes 🚜  ...
+ ✓ Joining worker nodes 🚜
+ • Waiting ≤ 3m0s for control-plane = Ready ⏳  ...
+ ✓ Waiting ≤ 3m0s for control-plane = Ready ⏳
+ • Ready after 11s 💚
+Set kubectl context to "kind-vault-hub"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-vault-hub
+
+Have a question, bug, or feature request? Let us know! https://kind.sigs.k8s.io/#community 🙂
+==> kind spoke (vault-spoke, 1 node)
+    creating kind cluster vault-spoke
+Creating cluster "vault-spoke" ...
+ • Ensuring node image (kindest/node:v1.35.0) 🖼  ...
+ ✓ Ensuring node image (kindest/node:v1.35.0) 🖼
+ • Preparing nodes 📦   ...
+ ✓ Preparing nodes 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+ • Waiting ≤ 3m0s for control-plane = Ready ⏳  ...
+ ✓ Waiting ≤ 3m0s for control-plane = Ready ⏳
+ • Ready after 16s 💚
+Set kubectl context to "kind-vault-spoke"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-vault-spoke
+
+Not sure what to do next? 😅  Check out https://kind.sigs.k8s.io/docs/user/quick-start/
+==> helm repo hashicorp
+"hashicorp" already exists with the same configuration, skipping
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "hashicorp" chart repository
+Update Complete. ⎈Happy Helming!⎈
+==> install Vault on hub (production-shaped values, tlsDisable)
+namespace/vault created
+Release "vault" does not exist. Installing it now.
+NAME: vault
+LAST DEPLOYED: Tue Aug  4 23:14:50 2026
+NAMESPACE: vault
+STATUS: deployed
+REVISION: 1
+NOTES:
+Thank you for installing HashiCorp Vault!
+
+Now that you have deployed Vault, you should look over the docs on using
+Vault with Kubernetes available here:
+
+https://developer.hashicorp.com/vault/docs
+
+Your release is named vault. To learn more about the release, try:
+
+  $ helm status vault
+  $ helm get manifest vault
+==> wait for vault pods (Running; may still be sealed)
+pod/vault-0 condition met
+pod/vault-1 condition met
+pod/vault-2 condition met
+pod/vault-0 condition met
+pod/vault-1 condition met
+pod/vault-2 condition met
+==> Shamir init / unseal
+==> vault status (vault-0)
+==> vault operator init (Shamir shares=5 threshold=3)
+    wrote .lab-secrets/init.json
+==> unseal Raft members
+    unsealing vault-0
+    unsealing vault-1
+    unsealing vault-2
+==> join check / status
+Key                     Value
+---                     -----
+Seal Type               shamir
+Initialized             true
+Sealed                  false
+Total Shares            5
+Threshold               3
+Version                 2.0.3
+Build Date              2026-06-17T12:39:45Z
+Storage Type            raft
+Cluster Name            vault-cluster-4ca05505
+Cluster ID              2ac524cc-85ed-0057-53cb-d0586186a73c
+Removed From Cluster    false
+HA Enabled              true
+HA Cluster              https://vault-0.vault-internal:8201
+HA Mode                 active
+Active Since            2026-08-04T23:15:54.636096749Z
+Raft Committed Index    41
+Raft Applied Index      41
+NAME      READY   STATUS    RESTARTS   AGE   IP           NODE                NOMINATED NODE   READINESS GATES
+vault-0   1/1     Running   0          68s   10.244.3.4   vault-hub-worker    <none>           <none>
+vault-1   0/1     Running   0          68s   10.244.1.4   vault-hub-worker2   <none>           <none>
+vault-2   0/1     Running   0          68s   10.244.2.4   vault-hub-worker3   <none>           <none>
+    root token → .lab-secrets/root_token
+==> init/unseal complete
+==> apply spoke workload SA + OIDC JWKS publisher
+namespace/finance-prod created
+serviceaccount/payment-api created
+namespace/vault-system created
+serviceaccount/oidc-jwks created
+configmap/oidc-jwks-config created
+configmap/oidc-jwks-app created
+deployment.apps/oidc-jwks created
+service/oidc-jwks created
+
+Lab is up.
+  Hub context:   kind-vault-hub
+  Spoke context: kind-vault-spoke
+  Vault UI:      kubectl --context kind-vault-hub -n vault port-forward svc/vault-ui 8200:8200
+  Vault NodePort from spoke/host network: http://172.18.0.5:30820
+  Shamir keys / root token: .lab-secrets/ (gitignored)
+  Next: ./scripts/lab-configure.sh
+```
+
+`vault-1` and `vault-2` often sit at `0/1` Ready. That is normal on Vault OSS — only the active leader answers readiness with 200. Easy to misread as a broken install the first time.
+
+The script footer prints `Next: ./scripts/lab-configure.sh`. That path is skipped here on purpose. The configure steps run one by one so each mistake shows up in the open.
+
+## Nodes and Raft first
+
+Wait for both clusters to become health and revalidate if everything is up and running
+
+```bash
+kubectl --context kind-vault-hub get nodes -o wide
+```
+
+```text
+NAME                      STATUS   ROLES           AGE     VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE                         KERNEL-VERSION                     CONTAINER-RUNTIME
+vault-hub-control-plane   Ready    control-plane   2m25s   v1.35.0   172.18.0.2    <none>        Debian GNU/Linux 12 (bookworm)   6.6.87.2-microsoft-standard-WSL2   containerd://2.2.0
+vault-hub-worker          Ready    <none>          2m12s   v1.35.0   172.18.0.5    <none>        Debian GNU/Linux 12 (bookworm)   6.6.87.2-microsoft-standard-WSL2   containerd://2.2.0
+vault-hub-worker2         Ready    <none>          2m12s   v1.35.0   172.18.0.3    <none>        Debian GNU/Linux 12 (bookworm)   6.6.87.2-microsoft-standard-WSL2   containerd://2.2.0
+vault-hub-worker3         Ready    <none>          2m12s   v1.35.0   172.18.0.4    <none>        Debian GNU/Linux 12 (bookworm)   6.6.87.2-microsoft-standard-WSL2   containerd://2.2.0
+```
+
+Spoke is a single control-plane node. That is enough for the proof Job and External Secrets later:
+
+```bash
+kubectl --context kind-vault-spoke get nodes -o wide
+```
+
+```text
+NAME                        STATUS   ROLES           AGE    VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE                         KERNEL-VERSION                     CONTAINER-RUNTIME
+vault-spoke-control-plane   Ready    control-plane   111s   v1.35.0   172.18.0.6    <none>        Debian GNU/Linux 12 (bookworm)   6.6.87.2-microsoft-standard-WSL2   containerd://2.2.0
+```
+
+Load the root token from `.lab-secrets/root_token` into the shell. The value itself stays off the page — only a length check so later `vault` commands have `$ROOT_TOKEN`:
+
+```bash
+export ROOT_TOKEN=$(cat .lab-secrets/root_token)
+echo "ROOT_TOKEN loaded (${#ROOT_TOKEN} chars)"
+```
+
+```text
+ROOT_TOKEN loaded (26 chars)
+```
+
+Raft should show three voters. Right after unseal, followers can still report `Voter false` for ten or twenty seconds while autopilot catches up. On this run they were already in place:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault operator raft list-peers
+```
+
+```text
+Node       Address                        State       Voter
+----       -------                        -----       -----
+vault-0    vault-0.vault-internal:8201    leader      true
+vault-1    vault-1.vault-internal:8201    follower    true
+vault-2    vault-2.vault-internal:8201    follower    true
+```
+
+Kind Docker IPs change on every recreate, so treat the numbers below as examples, not constants. Get Spoke control-plane IP address first JWKS will listen on NodePort **32080** :
+
+```bash
+export SPOKE_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' vault-spoke-control-plane)
+echo "$SPOKE_IP"
+```
+
+```text
+172.18.0.6
+```
+
+Get the hub cluster control plane ipaddress and Vault will listen on NodePort **30820** and spoke will use this to reach to vault cluster:
+
+```bash
+export HUB_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' vault-hub-control-plane)
+echo "$HUB_IP"
+```
+
+```text
+172.18.0.2
+```
+
+Export aboe three shell variables we will use this them in the next stage i.e OIDC base URL, bound issuer, and Vault API URL:
+
+```bash
+export OIDC_BASE="http://${SPOKE_IP}:32080"
+export ISSUER="https://oidc.vault-spoke.lab"
+export VAULT_URL="http://${HUB_IP}:30820"
+printf 'OIDC_BASE=%s\nISSUER=%s\nVAULT_URL=%s\n' "$OIDC_BASE" "$ISSUER" "$VAULT_URL"
+```
+
+```text
+OIDC_BASE=http://172.18.0.6:32080
+ISSUER=https://oidc.vault-spoke.lab
+VAULT_URL=http://172.18.0.2:30820
+```
+
+## Making JWKS reachable on kind
+
+`lab-up.sh` script already applied the JWKS publisher resources, but the default `external_base` does not match this run's Docker IP. Vault hub should fetch signing keys over the kind network. `https://oidc.vault-spoke.lab` is a fake hostname and vault will fail to resolve the domain.
+
+Update the jwks ConfigMap in the vault-system namespace in spoke cluster, so discovery deployment can advertises the base URL that vault hub can actually reach:
+
+```bash
+kubectl --context kind-vault-spoke -n vault-system create configmap oidc-jwks-config \
+  --from-literal=issuer="${ISSUER}" \
+  --from-literal=external_base="${OIDC_BASE}" \
+  -o yaml --dry-run=client | kubectl --context kind-vault-spoke apply -f -
+```
+
+```text
+configmap/oidc-jwks-config configured
+```
+
+Rollout restart the oidc-jwks so it reloads that ConfigMap:
+
+```bash
+kubectl --context kind-vault-spoke -n vault-system rollout restart deployment/oidc-jwks
+```
+
+```text
+deployment.apps/oidc-jwks restarted
+```
+
+Wait until new replica pod is Ready before validating the health of the pod:
+
+```bash
+kubectl --context kind-vault-spoke -n vault-system rollout status deployment/oidc-jwks --timeout=120s
+```
+
+```text
+Waiting for deployment "oidc-jwks" rollout to finish: 1 old replicas are pending termination...
+deployment "oidc-jwks" successfully rolled out
+```
+
+Once the OIDC discovery pod is up and running validate the output configuration of openid. The important field to validate is `jwks_uri` from the curl output that it must use the Docker IP, not the fake hostname:
+
+```bash
+curl -fsS "${OIDC_BASE}/.well-known/openid-configuration"
+```
+
+```text
+{
+  "issuer": "https://oidc.vault-spoke.lab",
+  "jwks_uri": "http://172.18.0.6:32080/openid/v1/jwks",
+  "response_types_supported": ["id_token"],
+  "subject_types_supported": ["public"],
+  "id_token_signing_alg_values_supported": ["RS256"]
+}
+```
+
+Then the JWKS document itself. One RSA key is enough for the lab:
+
+```bash
+curl -fsS "${OIDC_BASE}/openid/v1/jwks"
+```
+
+```text
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "use": "sig",
+      "alg": "RS256",
+      "kid": "tjnyMtfnQkz_NlBkKQSg1JIrm2a8_Ad_HcCpHtI3zHE"
+    }
+  ]
+}
+```
+
+On cloud this whole publisher goes away. Point `oidc_discovery_url` at the real cluster issuer and move on. The kind stand-in exists only because kind has no public OIDC endpoint.
+
+## Secrets, policy, and entity before first login
+
+Before any workload logs in, three things have to exist in Vault: the KV data, the shared policy, and an Identity Entity that already carries metadata.
+
+Skip the entity and let login create one. The new entity has no metadata. The policy still looks fine. Paths expand to nothing useful. That mistake burns real time.
+
+Enable KV v2 at the `test1-ou` prefix:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault secrets enable -path=test1-ou kv-v2
+```
+
+```text
+Success! Enabled the kv-v2 secrets engine at: test1-ou/
+```
+
+Write the **payment-api** secrets for testing:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault kv put test1-ou/finance/payment-api/prod \
+  db_password=s3cret-demo api_key=payment-api-demo
+```
+
+```text
+============= Secret Path =============
+test1-ou/data/finance/payment-api/prod
+
+======= Metadata =======
+Key                Value
+---                -----
+created_time       2026-08-04T23:39:00.384082009Z
+custom_metadata    <nil>
+deletion_time      n/a
+destroyed          false
+version            1
+```
+
+Add the **finance** shared path. The shared policy lets apps in the same BU read it:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault kv put test1-ou/finance/shared/prod api_key=shared-demo
+```
+
+```text
+========== Secret Path ==========
+test1-ou/data/finance/shared/prod
+
+======= Metadata =======
+Key                Value
+---                -----
+created_time       2026-08-04T23:39:00.733802044Z
+custom_metadata    <nil>
+deletion_time      n/a
+destroyed          false
+version            1
+```
+
+Create secrets of  **retail** under **oms** vault path. **payment-api** must not read this
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault kv put test1-ou/retail/oms/prod db_password=should-deny
+```
+
+```text
+======== Secret Path ========
+test1-ou/data/retail/oms/prod
+
+======= Metadata =======
+Key                Value
+---                -----
+created_time       2026-08-04T23:39:01.082074806Z
+custom_metadata    <nil>
+deletion_time      n/a
+destroyed          false
+version            1
+```
+
+Validate  **payment-api** secrets just to make sure everything is created correct before we deploy ACL policies:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault kv get test1-ou/finance/payment-api/prod
+```
+
+```text
+============= Secret Path =============
+test1-ou/data/finance/payment-api/prod
+
+======= Metadata =======
+Key                Value
+---                -----
+created_time       2026-08-04T23:39:00.384082009Z
+custom_metadata    <nil>
+deletion_time      n/a
+destroyed          false
+version            1
+
+======= Data =======
+Key            Value
+---            -----
+api_key        payment-api-demo
+db_password    s3cret-demo
+```
+
+Copy the shared policy HCL into the `vault-0` pod. Grant the exact leaf path **and** `/*`. A template that only grants the wildcard returns 403 on every plain `vault kv get …/prod`:
+
+```bash
+kubectl --context kind-vault-hub -n vault cp \
+  policies/universal-nested-policy.hcl vault-0:/tmp/universal.hcl
+```
+
+```text
+(no stdout — file copied into vault-0:/tmp/universal.hcl)
+```
+
+Write that file into Vault as `universal-nested-policy`:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault policy write universal-nested-policy /tmp/universal.hcl
+```
+
+```text
+Success! Uploaded policy: universal-nested-policy
+```
+
+Create the Identity Entity with metadata **before** first login. Five fields — `ou`, `bu`, `app_name`, `env`, `cluster` are what the shared policy expands against:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault write identity/entity name=payment-api-prod \
+  metadata=ou=test1 \
+  metadata=bu=finance \
+  metadata=app_name=payment-api \
+  metadata=env=prod \
+  metadata=cluster=vault-spoke
+```
+
+```text
+Key        Value
+---        -----
+aliases    <nil>
+id         19dc4e5d-fa64-83d4-fcc3-ffaa797d86c4
+name       payment-api-prod
+```
+
+validate  entity  and confirm those metadata keys are stored correctly:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault write -format=json identity/lookup/entity name=payment-api-prod
+```
+
+```text
+{
+  "data": {
+    "id": "19dc4e5d-fa64-83d4-fcc3-ffaa797d86c4",
+    "name": "payment-api-prod",
+    "metadata": {
+      "app_name": "payment-api",
+      "bu": "finance",
+      "cluster": "vault-spoke",
+      "env": "prod",
+      "ou": "test1"
+    }
+  }
+}
+```
+
+Export the entity id as a shell variable which we will use in the next step:
+
+```bash
+export ENTITY_ID=$(kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault write -format=json identity/lookup/entity name=payment-api-prod \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["id"])')
+echo "ENTITY_ID=$ENTITY_ID"
+```
+
+```text
+ENTITY_ID=19dc4e5d-fa64-83d4-fcc3-ffaa797d86c4
+```
+
+## Onboarding the spoke
+
+We have configured the secrets, acl policy, entity metadata and JWKS is also reachable from the vault hub. Enable a JWT auth mount for this spoke cluster with path `auth/k8s-prod`:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault auth enable -path=k8s-prod jwt
+```
+
+```text
+Success! Enabled jwt auth method at: k8s-prod/
+```
+
+Kind still cannot use `oidc_discovery_url` cleanly — the issuer hostname is not reachable from the hub — so configure the mount with `jwks_url` and `bound_issuer`:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault write auth/k8s-prod/config \
+  jwks_url="${OIDC_BASE}/openid/v1/jwks" \
+  bound_issuer="${ISSUER}"
+```
+
+```text
+Success! Data written to: auth/k8s-prod/config
+```
+
+Create the JWT role for **payment-api**. `bound_subject` must match the Kubernetes service account. Projected tokens need `audience: vault`; miss that and Vault rejects the JWT in a way that looks like a JWKS failure when it is not:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault write auth/k8s-prod/role/payment-api \
+  role_type=jwt \
+  user_claim=sub \
+  bound_audiences=vault \
+  bound_subject="system:serviceaccount:finance-prod:payment-api" \
+  token_policies=universal-nested-policy \
+  token_ttl=5m \
+  token_max_ttl=10m
+```
+
+```text
+Success! Data written to: auth/k8s-prod/role/payment-api
+```
+
+An entity alias ties the service account identity to the Identity Entity created earlier. That call needs the mount accessor for `k8s-prod`:
+
+```bash
+export MOUNT_ACCESSOR=$(kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault auth list -format=json \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["k8s-prod/"]["accessor"])')
+echo "MOUNT_ACCESSOR=$MOUNT_ACCESSOR"
+```
+
+```text
+MOUNT_ACCESSOR=auth_jwt_6bb48f32
+```
+
+The alias `name` must match the JWT `sub` claim exactly. If it does not, the first login creates a fresh empty entity — no metadata, wrong path expansion, silent 403s that look like a policy bug:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault write identity/entity-alias \
+  name="system:serviceaccount:finance-prod:payment-api" \
+  canonical_id="$ENTITY_ID" \
+  mount_accessor="$MOUNT_ACCESSOR"
+```
+
+```text
+Key             Value
+---             -----
+canonical_id    19dc4e5d-fa64-83d4-fcc3-ffaa797d86c4
+id              21d2f1dc-a8f9-7cae-0691-8dac243d2ebb
+```
+
+List auth mounts and confirm `k8s-prod/` shows type `jwt`:
+
+```bash
+kubectl --context kind-vault-hub -n vault exec vault-0 -- \
+  env VAULT_TOKEN="$ROOT_TOKEN" vault auth list
+```
+
+```text
+Path         Type     Accessor               Description                Version
+----         ----     --------               -----------                -------
+k8s-prod/    jwt      auth_jwt_6bb48f32      n/a                        n/a
+token/       token    auth_token_a55eeb82    token based credentials    n/a
+```
+
+Last do a sanity check before we validate the same using actual spoke deployment pod. Can the Docker network reach Vault? Use NodePort **30820** on `svc/vault`, not `vault-active`. Pointing External Secrets at the wrong Service once produced connection refused on 32620:
+
+```bash
+curl -sS "${VAULT_URL}/v1/sys/health"
+```
+
+```text
+{
+  "initialized": true,
+  "sealed": false,
+  "standby": true,
+  "performance_standby": false,
+  "replication_performance_mode": "disabled",
+  "replication_dr_mode": "disabled",
+  "version": "2.0.3",
+  "enterprise": false,
+  "cluster_name": "vault-cluster-97c992b9",
+  "cluster_id": "8e55b722-399b-5b6b-f366-69767643e124"
+}
+```
+
+`standby: true` means the request hit a follower. Fine on Vault OSS. The Job uses the same URL and still works.
+
+## Allow, then deny
+
+Lab setup is completed lets test whether my theory works or not. Apply a below Job manifest that runs using **payment-api** service account, mounts a projected token with `audience: vault`, logs into vault hub cluster at `auth/k8s-prod` , reads its own secret, then it will tries to read **oms**. `${VAULT_URL}` from the shell expands into the container env at apply time:
+
+```bash
+cat <<EOF | kubectl --context kind-vault-spoke apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-tenancy-proof
+  namespace: finance-prod
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: payment-api
+      containers:
+        - name: proof
+          image: hashicorp/vault:2.0.3
+          env:
+            - name: VAULT_ADDR
+              value: "${VAULT_URL}"
+          volumeMounts:
+            - name: sa-token
+              mountPath: /var/run/secrets/tokens
+              readOnly: true
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              JWT=\$(cat /var/run/secrets/tokens/vault)
+              echo "==> k8s-prod JWT login (OIDC/JWKS verified on hub)"
+              TOKEN=\$(vault write -field=token auth/k8s-prod/login role=payment-api jwt="\$JWT")
+              export VAULT_TOKEN="\$TOKEN"
+              echo "==> ALLOW finance/payment-api/prod"
+              vault kv get test1-ou/finance/payment-api/prod
+              echo "==> DENY retail/oms/prod (expect failure)"
+              if vault kv get test1-ou/retail/oms/prod; then
+                echo "ERROR: expected 403 on retail/oms" >&2
+                exit 1
+              fi
+              echo "tenancy proof OK"
+      volumes:
+        - name: sa-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: vault
+                  expirationSeconds: 600
+                  audience: vault
+EOF
+```
+
+```text
+job.batch/vault-tenancy-proof created
+```
+
+Wait until the Job is completed:
+
+```bash
+kubectl --context kind-vault-spoke -n finance-prod wait \
+  --for=condition=complete job/vault-tenancy-proof --timeout=180s
+```
+
+```text
+job.batch/vault-tenancy-proof condition met
+```
+
+The job ran successfully now lets validate the logs. As per the theory it vault hub should allow the pod to read the secrets of **payment-api** and it should denine  the access of **oms** application secrets with 403 error:
+
+```bash
+kubectl --context kind-vault-spoke -n finance-prod logs job/vault-tenancy-proof
+```
+
+```text
+==> k8s-prod JWT login (OIDC/JWKS verified on hub)
+==> ALLOW finance/payment-api/prod
+============= Secret Path =============
+test1-ou/data/finance/payment-api/prod
+
+======= Metadata =======
+Key                Value
+---                -----
+created_time       2026-08-04T23:39:00.384082009Z
+custom_metadata    <nil>
+deletion_time      n/a
+destroyed          false
+version            1
+
+======= Data =======
+Key            Value
+---            -----
+api_key        payment-api-demo
+db_password    s3cret-demo
+==> DENY retail/oms/prod (expect failure)
+Error reading test1-ou/data/retail/oms/prod: Error making API request.
+
+URL: GET http://172.18.0.2:30820/v1/test1-ou/data/retail/oms/prod
+Code: 403. Errors:
+
+* 1 error occurred:
+	* permission denied
+
+tenancy proof OK
+```
+
+As we can see that the universal ACL policy template which we have created is working as expected Same Vault it is allowing the job to fetch the secrets from the payments-api secrets path and blocking the access to oms secrets. This is happening due to metadata mismatch. This proves my theory is working as expected.
+
+## External Secrets on the same auth path
+
+As the above sample job is able to fetch the secret, lets test the same using real apps which is using external secrets operator to fetch the secrets.
+
+External Secrets Operator uses the same JWT path — same service account, same `aud=vault`, same `auth/k8s-prod` role. No AppRole. No TokenReview service account.
+
+Add the Helm chart repository:
+
+```bash
+helm repo add external-secrets https://charts.external-secrets.io
+```
+
+```text
+"external-secrets" already exists with the same configuration, skipping
+```
+
+Refresh the chart index:
+
+```bash
+helm repo update external-secrets
+```
+
+```text
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "external-secrets" chart repository
+Update Complete. ⎈Happy Helming!⎈
+```
+
+Create the operator namespace on the spoke:
+
+```bash
+kubectl --context kind-vault-spoke create namespace external-secrets \
+  --dry-run=client -o yaml | kubectl --context kind-vault-spoke apply -f -
+```
+
+```text
+namespace/external-secrets created
+```
+
+Install External Secrets with CRDs (chart **2.8.0** on this run):
+
+```bash
+helm upgrade --install external-secrets external-secrets/external-secrets \
+  --kube-context kind-vault-spoke \
+  -n external-secrets \
+  --set installCRDs=true \
+  --wait --timeout 5m
+```
+
+```text
+Release "external-secrets" does not exist. Installing it now.
+NAME: external-secrets
+LAST DEPLOYED: Tue Aug  4 23:39:28 2026
+NAMESPACE: external-secrets
+STATUS: deployed
+REVISION: 1
+```
+
+Apply SecretStore + ExternalSecret from [`manifests/spoke-eso.yaml`](https://github.com/ravichandrapatel/docs-and-adr/blob/main/docs/vault-hub/manifests/spoke-eso.yaml). The file uses a `__VAULT_ADDR__` placeholder — substitute the hub URL from earlier:
+
+```bash
+sed "s|__VAULT_ADDR__|${VAULT_URL}|g" manifests/spoke-eso.yaml \
+  | kubectl --context kind-vault-spoke apply -f -
+```
+
+```text
+secretstore.external-secrets.io/vault-hub created
+externalsecret.external-secrets.io/payment-api-secrets created
+```
+
+Wait until the SecretStore is Ready. That means JWT login from External Secrets succeeded:
+
+```bash
+kubectl --context kind-vault-spoke -n finance-prod wait \
+  --for=condition=Ready secretstore/vault-hub --timeout=120s
+```
+
+```text
+secretstore.external-secrets.io/vault-hub condition met
+```
+
+Force a sync so the refresh interval does not have to elapse:
+
+```bash
+kubectl --context kind-vault-spoke -n finance-prod annotate \
+  externalsecret/payment-api-secrets force-sync="$(date +%s)" --overwrite
+```
+
+```text
+externalsecret.external-secrets.io/payment-api-secrets annotated
+```
+
+Wait until the ExternalSecret reports Ready / SecretSynced:
+
+```bash
+kubectl --context kind-vault-spoke -n finance-prod wait \
+  --for=condition=Ready externalsecret/payment-api-secrets --timeout=120s
+```
+
+```text
+externalsecret.external-secrets.io/payment-api-secrets condition met
+```
+
+List SecretStore, ExternalSecret, and the materialized Secret in `finance-prod`:
+
+```bash
+kubectl --context kind-vault-spoke -n finance-prod get secretstore,externalsecret,secret
+```
+
+```text
+NAME                                        AGE   STATUS   CAPABILITIES   READY
+secretstore.external-secrets.io/vault-hub   1s    Valid    ReadWrite      True
+
+NAME                                                     STORETYPE     STORE       REFRESH INTERVAL   STATUS         READY   LAST SYNC
+externalsecret.external-secrets.io/payment-api-secrets   SecretStore   vault-hub   1m                 SecretSynced   True    1s
+
+NAME                         TYPE     DATA   AGE
+secret/payment-api-secrets   Opaque   2      0s
+```
+
+Decode the synced data. It should match what went into KV for **payment-api**:
+
+```bash
+kubectl --context kind-vault-spoke -n finance-prod get secret payment-api-secrets \
+  -o jsonpath='{.data}' | python3 -c \
+  'import sys,json,base64; d=json.load(sys.stdin); print({k: base64.b64decode(v).decode() for k,v in d.items()})' 
+```
+
+```text
+{'api_key': 'payment-api-demo', 'db_password': 's3cret-demo'}
+```
+
+SecretStore is `auth.jwt` → path `k8s-prod` / role `payment-api` — the same machine path as the proof Job. One auth design, two consumers.
+
+## Issues encountered during testing
+
+1. **`vault-1` stuck Pending on the hub.** Vault uses pod anti-affinity, so three schedulable workers are required. A default 3-node kind cluster is only 1 control plane + 2 workers, and the control plane is tainted — one Raft pod never schedules. Use a **4-node** hub: 1 control plane + **3** workers.
+
+2. **Raft join timeouts and kube-proxy CrashLoopBackOff.** Kind node file-watch limits were exhausted (`too many open files`). Raise `fs.inotify.max_user_watches` and `fs.inotify.max_user_instances` on every kind node before (or as soon as) the lab starts thrashing.
+
+3. **ESO `connection refused` on port 32620.** That NodePort belonged to `vault-active`, which was the wrong Service to hit from the spoke. Use `svc/vault` NodePort **30820** instead.
+
+4. **JWT validation errors.** The projected service-account token was missing `audience: vault`. The token audience must match the role auth role’s `bound_audiences`.
+
+5. **403 on the exact KV path even with a “good” ACL.** The policy only granted `…/env/*`. `vault kv get …/prod` hits the leaf path with no child segment — grant the **exact** path **and** the `/*` path.
+
+6. **Empty entity after first login.** Metadata was attached too late. Create the Identity Entity with metadata **before** the app’s first login, then bind the entity alias; otherwise login creates a hollow entity and the shared policy expands to nothing useful.
+
+## Tear down
+
+To destroy the cluster execute below steps:
+
+```bash
+./scripts/lab-down.sh
+```
+
+```text
+==> deleting kind clusters vault-hub vault-spoke
+Deleting cluster "vault-hub" ...
+Deleted nodes: ["vault-hub-control-plane" "vault-hub-worker" "vault-hub-worker2" "vault-hub-worker3"]
+Deleting cluster "vault-spoke" ...
+Deleted nodes: ["vault-spoke-control-plane"]
+```
+
+## Conclusions
+
+We were able to deploy and validate what was discussed in Part 1.
+
+**payment-api** logged in over JWT, read its own path, and got a flat 403 on **oms** — same Vault, same shared policy, different identity metadata. External Secrets used that same `auth/k8s-prod` role and synced a Kubernetes Secret without AppRole or a TokenReview service account. Per-cluster JWT with live JWKS worked on kind the hard way (`jwks_url` + `bound_issuer`); on cloud the publisher goes away and `oidc_discovery_url` takes its place.
+
+What OSS still does not give for free: native DR, standbys that serve reads, or a real namespace boundary. Path + metadata + one shared template closes a lot of that gap — and still needs careful review, because one bad attribute or one bad HCL line hits every app under that OU/BU. Fine for a side project. Not the same as Enterprise.
+
+*Regards,*  
+<span class="signature">Ravichandra</span>

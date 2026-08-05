@@ -4,6 +4,8 @@
   --vf-line: var(--line);
   --vf-accent: var(--accent);
   --vf-blue: var(--accent-2);
+  --vf-spoke: color-mix(in srgb, #5b9fd4 22%, transparent);
+  --vf-hub: color-mix(in srgb, #fbbf24 18%, transparent);
 
   position: relative;
   width: 100%;
@@ -27,12 +29,25 @@
   border-bottom: 1px solid var(--vf-line);
 }
 
+.headText {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
 .title {
   margin: 0;
   font-family: var(--font-mono);
   font-size: 0.8rem;
   font-weight: 500;
   letter-spacing: 0.02em;
+  color: var(--vf-ink);
+}
+
+.headHint {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
   color: var(--vf-dim);
 }
 
@@ -67,6 +82,10 @@
   color: #061018;
 }
 
+.toggleBtn[aria-checked="true"][data-tone="deny"] {
+  color: #1a0606;
+}
+
 .pill {
   position: absolute;
   inset: 0;
@@ -75,21 +94,82 @@
   z-index: 0;
 }
 
+.pillBad {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: #f87171;
+  z-index: 0;
+}
+
 .toggleLabel {
   position: relative;
   z-index: 1;
 }
 
-/* Locked to SVG viewBox — taller canvas so nodes/tags breathe */
+/* Hub | Spoke panels — room for placards under icons */
 .canvas {
   position: relative;
-  width: min(100%, 44rem);
-  aspect-ratio: 560 / 320;
-  min-height: 16rem;
+  width: min(100%, 56rem);
+  aspect-ratio: 820 / 480;
+  min-height: 26rem;
   margin: 0.75rem auto 0.5rem;
-  padding: 0.25rem 0;
-  background-image: radial-gradient(rgba(232, 238, 246, 0.06) 1px, transparent 1px);
+  padding: 0.35rem 0;
+  background-image: radial-gradient(rgba(232, 238, 246, 0.05) 1px, transparent 1px);
   background-size: 16px 16px;
+}
+
+.zoneSpoke {
+  fill: var(--vf-spoke);
+  stroke: color-mix(in srgb, #5b9fd4 55%, transparent);
+  stroke-width: 1.5;
+}
+
+.zoneHub {
+  fill: var(--vf-hub);
+  stroke: color-mix(in srgb, #fbbf24 50%, transparent);
+  stroke-width: 1.5;
+}
+
+.zoneLabel {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  pointer-events: none;
+  max-width: 14rem;
+}
+
+.zoneName {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+}
+
+.zoneLabelSpoke .zoneName {
+  color: #8ec8f0;
+}
+
+.zoneLabelHub .zoneName {
+  color: #f5d78a;
+}
+
+.zoneMeta {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--vf-dim);
+  letter-spacing: 0.01em;
+}
+
+.brandImg {
+  width: 1.65rem;
+  height: 1.65rem;
+  display: block;
+  object-fit: contain;
+  border-radius: 5px;
 }
 
 .svg {
@@ -108,15 +188,16 @@
   height: 100%;
 }
 
-/* Anchor = icon center; caption hangs below with room before the next node */
 .node {
   position: absolute;
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 5.5rem;
+  gap: 0.4rem;
+  width: 6.25rem;
   margin: 0;
-  transform: translate(-50%, -50%);
+  /* left/top = icon center; placard stacks below without shifting hops */
+  transform: translate(-50%, -1.375rem);
   z-index: 2;
   pointer-events: none;
 }
@@ -124,11 +205,11 @@
 .icon {
   display: grid;
   place-items: center;
-  width: 2.65rem;
-  height: 2.65rem;
+  width: 2.75rem;
+  height: 2.75rem;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-0) 70%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vf-line) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-0) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vf-line) 85%, transparent);
   flex-shrink: 0;
 }
 
@@ -138,33 +219,41 @@
   display: block;
 }
 
+/* Bordered caption plate under the icon (fixes Vault / K8s label float) */
+.placard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  width: 100%;
+  padding: 0.28rem 0.35rem 0.32rem;
+  border: 1px solid color-mix(in srgb, var(--vf-line) 90%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-0) 88%, transparent);
+  box-sizing: border-box;
+}
+
 .label {
-  position: absolute;
-  top: calc(50% + 1.55rem);
-  left: 50%;
-  transform: translateX(-50%);
+  margin: 0;
   font-family: var(--font-mono);
-  font-size: 0.7rem;
-  line-height: 1.2;
+  font-size: 0.68rem;
+  line-height: 1.15;
   text-align: center;
   color: var(--vf-ink);
   white-space: nowrap;
 }
 
 .badge {
-  position: absolute;
-  top: calc(50% + 2.7rem);
-  left: 50%;
-  transform: translateX(-50%);
   font-family: var(--font-mono);
-  font-size: 0.58rem;
+  font-size: 0.56rem;
   letter-spacing: 0.02em;
   color: var(--vf-accent);
   border: 1px solid color-mix(in srgb, var(--vf-accent) 35%, transparent);
-  background: color-mix(in srgb, var(--bg-0) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-0) 70%, transparent);
   border-radius: 3px;
-  padding: 0.08rem 0.35rem;
+  padding: 0.06rem 0.32rem;
   white-space: nowrap;
+  line-height: 1.2;
 }
 
 .edgeTag {
@@ -183,39 +272,128 @@
   pointer-events: none;
 }
 
-.foot {
-  border-top: 1px solid var(--vf-line);
-  padding: 0.8rem 1.1rem 0.95rem;
+.edgeTagOk {
+  color: #3ecf8e;
+  border-color: color-mix(in srgb, #3ecf8e 40%, transparent);
 }
 
-.footText {
-  margin: 0;
+.edgeTagBad {
+  color: #f87171;
+  border-color: color-mix(in srgb, #f87171 45%, transparent);
+}
+
+.nodeBad .icon {
+  border-color: color-mix(in srgb, #f87171 55%, transparent);
+}
+
+.nodeBad .placard {
+  border-color: color-mix(in srgb, #f87171 45%, transparent);
+}
+
+.nodeBad .badge {
+  color: #f87171;
+  border-color: color-mix(in srgb, #f87171 45%, transparent);
+}
+
+.nodeMuted {
+  opacity: 0.45;
+}
+
+.foot {
+  border-top: 1px solid var(--vf-line);
+  padding: 0.8rem 1.1rem 1rem;
+}
+
+.footLead {
+  margin: 0 0 0.65rem;
   font-size: 0.88rem;
-  line-height: 1.5;
+  line-height: 1.45;
+  color: var(--vf-ink);
+  font-weight: 500;
+}
+
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.steps li {
+  display: grid;
+  grid-template-columns: 1.4rem 1fr;
+  gap: 0.55rem;
+  align-items: start;
+}
+
+.stepNum {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  line-height: 1.4rem;
+  text-align: center;
+  color: #061018;
+  background: var(--vf-accent);
+  border-radius: 4px;
+  width: 1.4rem;
+  height: 1.4rem;
+}
+
+.stepNumBad {
+  background: #f87171;
+  color: #1a0606;
+}
+
+.stepText {
+  font-size: 0.8rem;
+  line-height: 1.45;
   color: var(--vf-dim);
 }
 
 @media (max-width: 40rem) {
   .canvas {
     width: 100%;
-    min-height: 14rem;
+    min-height: 18rem;
   }
 
   .node {
-    width: 4.75rem;
+    width: 5.5rem;
+    gap: 0.3rem;
   }
 
   .icon {
-    width: 2.35rem;
-    height: 2.35rem;
+    width: 2.4rem;
+    height: 2.4rem;
+  }
+
+  .brandImg {
+    width: 1.4rem;
+    height: 1.4rem;
+  }
+
+  .placard {
+    padding: 0.22rem 0.28rem;
   }
 
   .label {
-    font-size: 0.62rem;
+    font-size: 0.6rem;
+  }
+
+  .badge {
+    font-size: 0.5rem;
   }
 
   .edgeTag {
     font-size: 0.58rem;
     padding: 0.1rem 0.32rem;
+  }
+
+  .zoneName {
+    font-size: 0.68rem;
+  }
+
+  .zoneMeta {
+    font-size: 0.52rem;
   }
 }

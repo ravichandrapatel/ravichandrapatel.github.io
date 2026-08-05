@@ -8,13 +8,13 @@ draft: true
 cover: /posts/github-idp/cover-05.svg
 ---
 
-*This is an extension of [parts 1–4](/posts/github-idp-issueops-part-1/), not a fifth product pitch. The shoestring IDP can provision. It could not honestly answer “did someone ClickOps the bucket?” That gap is on me. Here’s the flaw, what I’m adding, and the hard rule: never auto-fix drift by quietly destroying resources.*
+*This is an extension of [parts 1–4](/notes/github-idp-issueops-part-1/), not a fifth product pitch. The shoestring IDP can provision. It could not honestly answer “did someone ClickOps the bucket?” That gap is on me. Here’s the flaw, what I’m adding, and the hard rule: never auto-fix drift by quietly destroying resources.*
 
 [Gap](#1-the-flaw-in-what-i-already-shipped) · [Need](#2-what-we-actually-need) · [Doing](#3-what-im-doing-about-it) · [Classify](#4-classify-before-you-reconcile) · [Wire](#5-wire-drift-reconcile) · [Solve](#6-how-to-solve-it) · [Destroy](#7-destroy-is-a-different-product) · [Checklist](#8-checklist) · [Next](#whats-next)
 
 ## 1. The flaw in what I already shipped
 
-[Part 1](/posts/github-idp-issueops-part-1/) drew the trust cut. [Part 2](/posts/github-idp-issueops-part-2/) made the Issue Form the portal. [Part 3](/posts/github-idp-issueops-part-3/) walked App PR → `tofu-pipeline`. [Part 4](/posts/github-idp-issueops-part-4/) was bootstrap and harden.
+[Part 1](/notes/github-idp-issueops-part-1/) drew the trust cut. [Part 2](/notes/github-idp-issueops-part-2/) made the Issue Form the portal. [Part 3](/notes/github-idp-issueops-part-3/) walked App PR → `tofu-pipeline`. [Part 4](/notes/github-idp-issueops-part-4/) was bootstrap and harden.
 
 That arc is a **day-1 / day-0** story: request → Git → plan → gated apply. It assumes the happy path stays happy. It does not.
 
@@ -27,7 +27,7 @@ So the flaw is twofold:
 1. **No detect** — drift is invisible until the next human PR.  
 2. **Unsafe solve** — blind reconcile can destroy.
 
-Control still must not grow a second apply path. The fix stays on the **workload**, same trust domain as [part 1](/posts/github-idp-issueops-part-1/).
+Control still must not grow a second apply path. The fix stays on the **workload**, same trust domain as [part 1](/notes/github-idp-issueops-part-1/).
 
 ## 2. What we actually need
 
@@ -169,10 +169,10 @@ Intentional teardown stays a normal Git PR on a non-`drift/` branch — with Env
 
 ### Series
 
-1. [Architecture](/posts/github-idp-issueops-part-1/)  
-2. [Issue Forms & public gate](/posts/github-idp-issueops-part-2/)  
-3. [Label → plan](/posts/github-idp-issueops-part-3/)  
-4. [Bootstrap & harden](/posts/github-idp-issueops-part-4/)  
+1. [Architecture](/notes/github-idp-issueops-part-1/)  
+2. [Issue Forms & public gate](/notes/github-idp-issueops-part-2/)  
+3. [Label → plan](/notes/github-idp-issueops-part-3/)  
+4. [Bootstrap & harden](/notes/github-idp-issueops-part-4/)  
 5. **This extension** — day-2 drift (draft)
 
 ### Related

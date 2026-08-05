@@ -1,45 +1,68 @@
 ---
 title: "Building a Multi-Tenant HashiCorp Vault OSS Hub Without Policy Sprawl"
-description: "Central HashiCorp Vault OSS hub with identity metadata and one shared policy. A Vault namespaces alternative without policy sprawl. Kind lab allow/deny proof, footguns, and production limits."
+description: "Central HashiCorp Vault OSS hub with identity metadata and one shared policy. A Vault namespaces alternative without policy sprawl — architecture and decisions behind the hub."
 pubDate: 2026-08-04T13:30:00.000Z
-updatedDate: 2026-08-04T13:30:00.000Z
+updatedDate: 2026-08-05T03:50:00.000Z
 tags: [vault, vault-oss, kubernetes, secrets, multi-tenant, metadata-policy, notes]
 draft: false
 cover: /posts/vault-hub/cover.svg
 ---
 
-import VaultK8sAuthFlow from "../../components/diagrams/VaultK8sAuthFlow.tsx";
-import ExpandCode from "../../components/ExpandCode.tsx";
-import vaultProdValues from "../snippets/vaultHubProdValues.ts";
+import Callout from '../../components/callOut.tsx';
 
-Recently I started building an internal developer portal as a side project. When I got to architecture and tool selection, one question kept coming up that I couldn't skip past: what lives where, and who gets to access it. Before I touched implementation, I needed to answer that everything else in the architecture would end up built around it.
+Recently I started building an internal developer portal as a side project. When I got to architecture and tool selection, one question kept coming up that I couldn't skip past: what lives where, and who gets to access it. Before I touched implementation, I needed to answer that — everything else in the architecture would end up built around it.
 
-Going back through everything an internal developer portal actually does, the thing I kept landing on first was secrets. Whether the portal ends up single-tenant, multi-tenant, multi-account, or multi-cloud, none of that matters if I haven't figured out how to store secrets securely underneath it. This post is my journey into finding the right answer for my own use case, not a general one.
+Going back through everything an internal developer portal actually does, the thing I kept landing on first was secrets. Whether the portal ends up single-tenant, multi-tenant, multi-account, or multi-cloud, none of that matters if I haven't figured out how to store secrets securely underneath it. This post is my journey into finding the right answer for my own use case, not a general one. To keep this from becoming a single massive page-long note, I'm splitting it into two parts. This post will be on architecture and decisions behind it. Part 2 will be on deploying this in real/lab clusters to find out if any of this actually works.
 
 ## The Tool That Checked Every Box Except the Budget
 
 I looked at a lot of options for storing secrets securely. AWS Secrets Manager was the obvious first stop — easy to use, easy to integrate, secure by default. Azure Key Vault and GCP Secret Manager were both fine candidates too. But I kept coming back to one problem: I need something with no cloud lock-in, so I can bootstrap this IdP on any cloud without rebuilding the secrets layer later.
 
-That one constraint did most of the filtering by itself. No cloud lock-in, works on VMs or containers, can hand secrets to both, supports OIDC-based auth for cloud workloads, gives me real isolation between tenants, and has an HA/DR story I can trust. That's a short list to write down, but it ruled out almost everything except one tool.
+That one constraint did most of the filtering by itself. No cloud lock-in, works on VMs or containers, can hand secrets to both, supports OIDC-based auth for cloud workloads, gives me real isolation between tenants, and has an HA/DR story I can trust. One more thing, this one about how I wanted to run it, not what the tool could do: one secret broker for all apps, not separate instances per team, tenant, environment, or cloud. That's a short list to write down, but it ruled out almost everything except one tool.
 
-**HashiCorp Vault**. I've been running **Vault Enterprise** at work for the past five years, and it checks every one of those boxes without me having to think twice. There's just one problem: this is a side project, and I don't have an Enterprise budget for it. So my eyes landed on Vault OSS instead and I already knew going to **Vault OSS** doesn't give you namespace isolation or the HA story Enterprise does. Those are the things you pay for.
+**HashiCorp Vault**. I've been running **Vault Enterprise** at work for the past five years, and it checks every one of those boxes without me having to think twice. There's just one problem: this is a side project, and I don't have an Enterprise budget for it. So my eyes landed on **Vault OSS** instead and I already knew going in that it doesn't give you namespace isolation or the HA story Enterprise does. Those are the things you pay for.
 
 That's the actual fork I was standing at: Enterprise has the isolation model I trust, OSS doesn't, and I can't afford Enterprise. So the rest of this post is me finding out how much of that gap I can actually close on my own and where I hit the point OSS just can't get me there.
 
 
-To make this concrete, I'll carry one example through the rest of this post instead of talking in the abstract about "apps" and "tenants."
+## Shape of the Hub
 
-Picture the org as it'll actually look once this is live: a top-level org (I'll call it test1), with business units underneath it say, **finance** and **retail** and each BU running its own apps. Finance runs something called **payment-api**. Retail runs something called **oms**. Same Vault, same org, two completely different teams who should never see each other's secrets.
+For the Internal Developer Portal I don't want to create a separate secrets broker per tenant, environment, or cloud, which I mentioned earlier. I need a central Vault cluster and I will run this in the same cluster as my IDP and every tenant, team, and cloud logs into that same hub.
 
-If this design works, **payment-api** should read its own secrets without a second thought, and get flatly denied the moment it reaches for anything under retail's **oms** same policy engine, same Vault instance, nothing but identity telling them apart.
+I already knew this part from my experience running Vault Enterprise and Kubernetes — i.e. odd quorum, similar idea as etcd. Taking that into account, 3-node common minimum HA [Raft](https://developer.hashicorp.com/vault/docs/configuration/storage/raft) is what I'm actually running for this, not just a random number I got from the internet.
 
-## Testing the Obvious Thing First
+![Multi-tenant HashiCorp Vault OSS hub architecture: clusters authenticate in, identity provider for humans, short-lived credentials out](/posts/vault-hub/architecture.png)
 
-I started with the initial design for app level isolation, I will use AppRole with ACL policy for each app, so will have 1 policy and role for **payment-api** and 1 policy and AppRole for **oms**. In theory when one app tries to read another app's secret it should get 403 access denied error.
+<Callout type="note" title="Out of scope here">
+  As part of this post I am not integrating Azure/Okta OIDC SSO with the Vault hub.
+</Callout>
 
-On paper it looks good, but doing this for two apps I can manage it, what if I need to onboard multiple applications and multiple organizations, then entire day goes into writing the policy.hcl files for each and I need to spend a night trying to fix the issues, where and what is causing the issue. This idea is good when you have a handful of applications and is not the correct architecture path.
+## How Clusters Actually Onboard
 
-It resolves the policy sprawl we get from using a single policy per app — instead, I should create one shared policy template, used by any secrets path, driven by identity entity metadata.
+Now that the number of nodes for the Vault hub cluster is sorted, the next question is how a new Kubernetes cluster actually gets onboarded to Vault to fetch secrets. After going through the official documentation, I found three ways of doing this.
+
+1. **Per-cluster mount, TokenReview.** A dedicated Vault auth mount per cluster, and on every login Vault calls back to that specific cluster's Kubernetes API server endpoint to check the token. This is the standard, most-used method.
+2. **Per-cluster mount, live OIDC discovery.** A dedicated Vault mount per cluster, but instead of calling the API server, Vault fetches the cluster's signing keys live from its public OIDC discovery endpoint at the moment of login. Because the keys are fetched live, they're automatically rotated at each login. I don't need to manually rotate anything.
+3. **One shared mount, static keys.** A single mount holds the public signing keys for every cluster I onboard, copied and pasted in directly, and roles use `bound_issuer` to tell which cluster is trying to log in. This is the only option that reduces mount count — but the con is I have to manually rotate the static keys whenever they change.
+
+Per the design, I chose per-cluster mount with live OIDC discovery. The reason: during an EKS upgrade from 1.20 to 1.21 that I have done, already Vault-onboarded clusters started failing. Going through the documentation, this was Kubernetes' broader move toward OIDC-compliant service account tokens around that version. Service account tokens became short-lived and auto-rotating, and one time the service account used to onboard a cluster got accidentally deleted, which caused a similar issue. Both cases came down to the same root cause: TokenReview depends on a persistent reviewer service account credential that can go stale or get deleted from the cluster. Using OIDC discovery doesn't need those static reviewer tokens — Vault validates against public keys directly — so that entire failure mode goes away. That's the real reason I chose it, not just the automatic rotation.
+
+If you want more on this, HashiCorp's own tracking issue is here: [github.com/hashicorp/vault/issues/11953](https://github.com/hashicorp/vault/issues/11953), and a good practical write-up of the exact 1.21 issue is here: [particule.io/en/blog/vault-1.21](https://particule.io/en/blog/vault-1.21/).
+
+## The shared policy template
+
+To make this concrete, I'll carry one example through the rest of this and part 2 post instead of talking in the abstract about "apps" and "tenants."
+
+Picture the org as it'll actually look once this is live: a top-level org (I'll call it test1), with business units underneath it — say, **finance** and **retail** — and each BU running its own apps. Finance runs something called **payment-api**. Retail runs something called **oms**. Same Vault, same org, two completely different teams who should never see each other's secrets.
+
+If this design works, **payment-api** should read its own secrets without a second thought, and get flatly denied the moment it reaches for anything under retail's **oms** — same policy engine, same Vault instance, nothing but identity telling them apart.
+
+
+I started with the initial design for app-level isolation: I will use AppRole with an ACL policy for each app, so will have 1 policy and role for **payment-api** and 1 policy and AppRole for **oms**. In theory when one app tries to read another app's secret it should get a 403 access denied error.
+
+On paper it looks good, but doing this for two apps I can manage it. What if I need to onboard multiple applications and multiple organizations? Then the entire day goes into writing the policy.hcl files for each, and I need to spend a night trying to fix the issues — where and what is causing the issue. This idea is good when you have a handful of applications and is not the correct architecture path.
+
+That per-app model *is* the sprawl. The fix is one shared policy template, used by any secrets path, driven by identity entity metadata.
 
 Why identity entity metadata wins. Without metadata-driven policies, every new application becomes another policy lifecycle to own, review, version, and test. Using identity entity metadata moves onboarding from writing HCL to assigning attributes. The policy ACL stays as a single shared template. So taking my earlier example into consideration, the identity entity carries `<OU>/<BU>/<APP_NAME>/<ENV>`.
 
@@ -49,7 +72,7 @@ Below is what I finalized for the shared policy template. Prefix naming is `{ou}
 
 **shared/** is BU-wide on purpose, not cross-tenant. Platform jobs that span BUs need their own entity/policy, not a wider universal template.
 
-You need the exact path and the /* path. vault kv get hits the exact path; nested keys need the wildcard. Skip Issues Encountered and you'll paste a 403 into prod. Metadata-driven policies still need careful review. A bad template is a cross-tenant leak or a silent 403 with nice syntax.
+You need the exact path and the `/*` path. `vault kv get` hits the exact path; nested keys need the wildcard. Skip that and you'll paste a 403 into prod. Metadata-driven policies still need careful review. A bad template — or one wrong metadata attribute — is a cross-tenant leak or a silent 403 with nice syntax. This hub is a shared dependency: one bad shared template or metadata change can hit every tenant in that OU/BU.
 
 ```hcl
 # Exact path: what `vault kv get .../prod` hits (without this: 403)
@@ -73,4 +96,13 @@ path "identity/entity/id/{{identity.entity.id}}" {
 }
 ```
 
+Once auth works, the request path is straightforward: the pod presents a Kubernetes JWT, Vault lands on an Identity Entity with metadata, the shared policy expands, and the KV path either allows or returns 403.
 
+The cluster architecture and policy design is ready. It is time to implement this in lab to make sure what I have sorted aligns with what I am thinking. On paper this looks good and gets me most of the way an Enterprise namespace would have given it for free.
+Like I said, this is my side project so I can miss out on a few things which the Enterprise version offers by default — live native DR, standbys that serve the read, a namespace boundary instead of this policy discipline I have to maintain by hand. I am accepting that gap for now.
+
+**Part 2:** [Kind lab, OIDC onboard, allow/deny proof](/notes/vault-hub-architecture-part-2/) — interactive onboarding diagram, kind steps, and the allow/deny run.
+
+
+*Regards,*  
+<span class="signature">Ravichandra</span>

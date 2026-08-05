@@ -5,7 +5,7 @@ import { PLATFORM_TOOLS } from "../lib/toolIcons";
 
 const base = import.meta.env.BASE_URL;
 
-/** Tool constellation only — posts stay on /posts, not as duplicate graph hubs. */
+/** Tool constellation only — notes stay on /notes, not as duplicate graph hubs. */
 const seeds = PLATFORM_TOOLS.map((tool) => ({
   id: tool.id,
   label: tool.label,
@@ -25,7 +25,7 @@ const seeds = PLATFORM_TOOLS.map((tool) => ({
         Practical dispatches from multi-cloud operations.
       </p>
       <div class="cta-row">
-        <a class="btn btn-primary" href={`${base}posts/`}>Browse notes</a>
+        <a class="btn btn-primary" href={`${base}notes/`}>Browse notes</a>
         <a class="btn" href={`${base}about/`}>About the author</a>
       </div>
     </div>

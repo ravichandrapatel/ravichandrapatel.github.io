@@ -24,7 +24,7 @@ const coverHref = cover
   ? new URL(cover.replace(/^\//, ""), Astro.site).href
   : new URL("logo.png", Astro.site).href;
 const logoHref = new URL("logo.png", Astro.site).href;
-const isPost = path.startsWith("/posts/") && path !== "/posts/";
+const isPost = path.startsWith("/notes/") && path !== "/notes/";
 
 const jsonLd = {
   "@context": "https://schema.org",
@@ -76,7 +76,7 @@ const jsonLd = {
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Syne:wght@700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Syne:wght@700;800&display=swap"
       rel="stylesheet"
     />
     <title>{pageTitle}</title>
@@ -102,48 +102,48 @@ const jsonLd = {
   <body>
     <div class="site-shell">
       <header class="site-header">
-        <a class="brand" href={base}>
-          <img
-            class="brand-mark"
-            src={`${base}favicon.svg`}
-            width="28"
-            height="28"
-            alt=""
-            decoding="async"
-          />
-          <span class="brand-text">cloud-<em>dispatch</em></span>
-        </a>
-        <div class="header-actions">
+        <div class="header-cluster">
+          <a class="brand" href={base}>
+            <img
+              class="brand-mark"
+              src={`${base}favicon.svg`}
+              width="28"
+              height="28"
+              alt=""
+              decoding="async"
+            />
+            <span class="brand-text">cloud-<em>dispatch</em></span>
+          </a>
           <nav class="nav" aria-label="Primary">
             <a href={base} aria-current={path === "/" ? "page" : undefined}>Home</a>
-            <a href={`${base}posts/`} aria-current={path.startsWith("/posts") ? "page" : undefined}
+            <a href={`${base}notes/`} aria-current={path.startsWith("/notes") ? "page" : undefined}
               >Notes</a
             >
             <a
               href={`${base}spvs-checker/`}
               aria-current={path.startsWith("/spvs-checker") ? "page" : undefined}
-              >SPVS</a
+              >OWASP SPVS Validator</a
             >
             <a href={`${base}about/`} aria-current={path === "/about/" ? "page" : undefined}
               >About</a
             >
           </nav>
-          <button
-            type="button"
-            class="theme-toggle"
-            id="theme-toggle"
-            aria-label="Toggle light and dark theme"
-            title="Toggle theme"
-          >
-            <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8">
-              <path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"></path>
-            </svg>
-            <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8">
-              <circle cx="12" cy="12" r="4"></circle>
-              <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
-            </svg>
-          </button>
         </div>
+        <button
+          type="button"
+          class="theme-toggle"
+          id="theme-toggle"
+          aria-label="Toggle light and dark theme"
+          title="Toggle theme"
+        >
+          <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"></path>
+          </svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+          </svg>
+        </button>
       </header>
       <main class="site-main">
         <slot />

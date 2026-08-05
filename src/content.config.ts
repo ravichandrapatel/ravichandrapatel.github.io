@@ -12,7 +12,7 @@ const posts = defineCollection({
     tags: z.array(z.string()).default([]),
     /** Hard hide — not scheduled. Prefer future `pubDate` for timed release. */
     draft: z.boolean().default(false),
-    /** Public path to cover image, e.g. `/posts/github-idp/cover-01.png` */
+    /** Public path to cover image, e.g. `/posts/github-idp/cover-01.png` (static assets under public/posts/) */
     cover: z.string().optional(),
   }),
 });

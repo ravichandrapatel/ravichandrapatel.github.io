@@ -199,8 +199,9 @@ export async function evaluateSpvsYaml(yamlText: string): Promise<{
 }
 
 /** Prefetch wasm on page mount so Run check is local-only. */
-export function prefetchPolicy(): void {
-  void getPolicy().catch(() => {
-    /* surfaced when user runs a check */
-  });
+export function prefetchPolicy(): Promise<void> {
+  return getPolicy().then(
+    () => undefined,
+    () => undefined /* surfaced when user runs a check */,
+  );
 }

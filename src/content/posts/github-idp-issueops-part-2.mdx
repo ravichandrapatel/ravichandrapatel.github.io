@@ -4,7 +4,7 @@ description: "GitHub-only IDP operator UX — Issue Forms as the portal, empty l
 pubDate: 2026-08-06T13:30:00.000Z
 updatedDate: 2026-08-06T13:30:00.000Z
 tags: [github-actions, issueops, idp, platform-engineering, github, notes]
-draft: false
+draft: true
 cover: /posts/github-idp/cover-02.svg
 ---
 
@@ -16,7 +16,7 @@ import GitHubIssueOpsFlow from "../../components/diagrams/GitHubIssueOpsFlow.tsx
 
 ## 0. Assumes
 
-[architecture](/posts/github-idp-issueops-part-1/) drew the four-repo map and the trust cut. This post is the operator story: what you fill in, what gets checked, and how state shows up on the issue.
+[architecture](/notes/github-idp-issueops-part-1/) drew the four-repo map and the trust cut. This post is the operator story: what you fill in, what gets checked, and how state shows up on the issue.
 
 **Worked example in this post:** **Provision S3 bucket** on [gh-platform-control](https://github.com/ravichandrapatel/gh-platform-control). That’s the form I can screenshot. The stack that lands already calls **modules you release** (my demo uses monorepo tags like `s3/v1.0.0`; your org may use one-repo-per-module — same idea).
 
@@ -69,13 +69,13 @@ uniqueness_key_from:
 
 **Copy/paste class:** Requires modification — `module.path` / `ref` must match **your** release tags.
 
-Templates turn that into a normal `source = "git::…?ref=…"` (monorepo path or a dedicated module remote — see [modules library](/posts/github-idp-issueops-part-1/#44-gh-platform-modules--the-iac-library)). From the catalog, control also derives:
+Templates turn that into a normal `source = "git::…?ref=…"` (monorepo path or a dedicated module remote — see [modules library](/notes/github-idp-issueops-part-1/#44-gh-platform-modules--the-iac-library)). From the catalog, control also derives:
 
 - Stack path: `stacks/s3-bucket-<bucket_name>/`  
 - Branch: `issueops/s3-bucket-<bucket_name>`  
 - Natural key: `s3-bucket:<env>:<bucket_name>`  
 
-No issue number in the path — so re-runs and duplicates behave predictably (next section + [the provision path](/posts/github-idp-issueops-part-3/#3-natural-key-uniqueness)).
+No issue number in the path — so re-runs and duplicates behave predictably (next section + [the provision path](/notes/github-idp-issueops-part-3/#3-natural-key-uniqueness)).
 
 ## 2. Public gate and authz
 
@@ -119,7 +119,7 @@ End to end from the human side:
 2. Operator adds `issueops` + `product:s3-bucket` (optional `status:pending-validation`).  
 3. `issue-provision` runs: authz → validate → render stack from templates using your module pins → App opens/updates the workload PR → issue comment + `status:pr-open`.  
 4. On **private** `infra-dev`, review the PR (plan CI). Merge when green.  
-5. Apply runs under the workload Environment. Further status labels need `status-sync` wired ([the provision path](/posts/github-idp-issueops-part-3/#5-status-sync)).
+5. Apply runs under the workload Environment. Further status labels need `status-sync` wired ([the provision path](/notes/github-idp-issueops-part-3/#5-status-sync)).
 
 What you’re looking at after step 3 is not “the cloud is done” — it’s “Git has a proposed stack that already references your modules.” Actual resources show up after merge + apply. Patience. Or coffee.
 
@@ -162,7 +162,7 @@ Issue numbers are bad identity. Close issue #42, open another for the same bucke
 | Same name, different env | Allowed (different workload / account) |
 | Exists only in the cloud, not in git | Control ignores it — Git is source of truth (by design, not spite) |
 
-So uniqueness is a **platform feature**, not a bug when duplicates fail. Scan order and edge cases: [the provision path](/posts/github-idp-issueops-part-3/#3-natural-key-uniqueness).
+So uniqueness is a **platform feature**, not a bug when duplicates fail. Scan order and edge cases: [the provision path](/notes/github-idp-issueops-part-3/#3-natural-key-uniqueness).
 
 ## 6. Tracking vs deploy Environments
 
@@ -207,5 +207,5 @@ I’ve been running these on **dev**. Prod is a registry row when you need it �
 
 **Done in this post:** Issue Form fields, public gate + `operators.yaml`, labels as state, natural keys, tracking vs deploy Environments.
 
-**Next:** [From label to plan](/posts/github-idp-issueops-part-3/) — what `issue-provision` does under the hood, App tokens, `tofu-pipeline`, footguns.
+**Next:** [From label to plan](/notes/github-idp-issueops-part-3/) — what `issue-provision` does under the hood, App tokens, `tofu-pipeline`, footguns.
 

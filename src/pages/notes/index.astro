@@ -9,7 +9,7 @@ const posts = await getPublishedPosts();
 <BaseLayout
   title="Notes"
   description="Field notes on cloud-dispatch."
-  path="/posts/"
+  path="/notes/"
 >
   <article class="prose">
     <h1>Notes</h1>
@@ -30,12 +30,12 @@ const posts = await getPublishedPosts();
             return (
               <li class={coverSrc ? "has-cover" : undefined}>
                 {coverSrc && (
-                  <a class="post-list-cover" href={`${base}posts/${post.id}/`} tabindex="-1" aria-hidden="true">
+                  <a class="post-list-cover" href={`${base}notes/${post.id}/`} tabindex="-1" aria-hidden="true">
                     <img src={coverSrc} alt="" width="1600" height="900" loading="lazy" />
                   </a>
                 )}
                 <div class="post-list-body">
-                  <a href={`${base}posts/${post.id}/`}>{post.data.title}</a>
+                  <a href={`${base}notes/${post.id}/`}>{post.data.title}</a>
                   <p class="desc">{post.data.description}</p>
                   <p class="meta">
                     {post.data.pubDate.toISOString().slice(0, 10)}
