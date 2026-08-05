@@ -235,8 +235,7 @@ html[data-theme="light"] .theme-toggle .icon-moon {
   flex-wrap: wrap;
   gap: 1.5rem;
   font-family: var(--font-mono);
-  font-size: 1.2rem;
-  font-weight: 500;
+  font-size: 1rem;
 }
 
 .nav a {
