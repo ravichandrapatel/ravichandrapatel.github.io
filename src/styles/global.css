@@ -2,6 +2,14 @@
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
+/* Keep Tailwind theme tokens aligned with site fonts (prod bundle order can otherwise
+   leave system ui-monospace visible longer than Vite dev). */
+@theme {
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-sans: "Syne", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+}
+
 :root,
 html[data-theme="dark"] {
   color-scheme: dark;
@@ -88,6 +96,10 @@ html[data-theme="light"] {
 
 html {
   scroll-behavior: smooth;
+  /* Pin root so rem math matches local Vite and GitHub Pages (no UA zoom drift). */
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -96,6 +108,8 @@ body {
   font-family: var(--font-body);
   font-size: 1.125rem;
   line-height: 1.7;
+  /* Source Serif 4 opsz axis can look like a size shift vs local/cached fonts. */
+  font-optical-sizing: none;
   color: var(--ink);
   background:
     radial-gradient(1200px 600px at 10% -10%, var(--glow-a), transparent 55%),
