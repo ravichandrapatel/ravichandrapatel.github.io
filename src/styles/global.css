@@ -2,6 +2,17 @@
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
+/* Self-hosted latin faces — same files in Vite dev and GitHub Pages (no Google CDN swap). */
+@import "@fontsource/syne/latin-700.css";
+@import "@fontsource/syne/latin-800.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+@import "@fontsource/source-serif-4/latin-400.css";
+@import "@fontsource/source-serif-4/latin-400-italic.css";
+@import "@fontsource/source-serif-4/latin-600.css";
+@import "@fontsource/caveat/latin-500.css";
+@import "@fontsource/caveat/latin-600.css";
+
 /* Keep Tailwind theme tokens aligned with site fonts (prod bundle order can otherwise
    leave system ui-monospace visible longer than Vite dev). */
 @theme {
@@ -168,7 +179,8 @@ img {
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(10px);
   background: var(--header-bg);
-  /* Prevent mobile/browser text inflation from resizing chrome */
+  /* Isolate chrome from body 1.125rem; keep inherited line-height for brand metrics */
+  font-size: 16px;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
@@ -229,7 +241,7 @@ html[data-theme="light"] .theme-toggle .icon-moon {
   gap: 0.65rem;
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 1.35rem;
+  font-size: 21.6px; /* was 1.35rem — pinned px for prod/dev parity */
   letter-spacing: 0.02em;
   color: var(--ink);
   text-decoration: none;
@@ -253,14 +265,14 @@ html[data-theme="light"] .theme-toggle .icon-moon {
   align-items: center;
   gap: 1.5rem;
   font-family: var(--font-mono);
-  font-size: 1rem;
+  font-size: 16px;
   font-weight: 400;
   line-height: 1.25;
 }
 
 .nav a {
   font-family: inherit;
-  font-size: 1rem;
+  font-size: 16px;
   font-weight: 400;
   line-height: 1.25;
   color: var(--ink-dim);
@@ -273,7 +285,7 @@ html[data-theme="light"] .theme-toggle .icon-moon {
 .nav a[aria-current="page"] {
   color: var(--ink);
   /* Keep metrics identical — brightness alone can look like a size jump */
-  font-size: 1rem;
+  font-size: 16px;
   font-weight: 400;
 }
 
@@ -702,6 +714,40 @@ html[data-theme="light"] .theme-toggle .icon-moon {
     -webkit-overflow-scrolling: touch;
     table-layout: auto;
   }
+}
+
+.error-page {
+  padding: clamp(4rem, 12vh, 7rem) var(--page-pad) 4rem;
+  max-width: var(--max);
+  margin-inline: auto;
+}
+
+.error-code {
+  margin: 0 0 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+
+.error-page h1 {
+  margin: 0 0 0.75rem;
+  font-family: var(--font-display);
+  font-size: clamp(1.85rem, 4vw, 2.4rem);
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.error-lead {
+  margin: 0 0 1.75rem;
+  max-width: 36rem;
+  color: var(--ink-dim);
+  font-size: 1.05rem;
+  line-height: 1.65;
+}
+
+.error-page .cta-row {
+  animation: none;
 }
 
 .empty-state {

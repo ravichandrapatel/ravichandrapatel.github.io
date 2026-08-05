@@ -20,10 +20,15 @@ export default defineConfig({
     mdx(),
     sitemap({
       // Drafts + future pubDates are omitted from getStaticPaths (see src/lib/posts.ts).
-      filter: (page) => !page.includes("google"),
+      filter: (page) => !page.includes("google") && !page.includes("/404"),
     }),
   ],
   vite: {
     plugins: [tailwindcss()],
+    optimizeDeps: {
+      // Keep island deps in the Vite prebundle so client:load hydration
+      // does not 404 after lockfile / font installs re-optimize the cache.
+      include: ["framer-motion", "lucide-react", "react", "react-dom", "react/jsx-runtime"],
+    },
   },
 });
