@@ -27,9 +27,9 @@ That's the actual fork I was standing at: Enterprise has the isolation model I t
 
 ## Shape of the Hub
 
-For the Internal Developer Portal I don't want to create a separate secrets broker per tenant, environment, or cloud, which I mentioned earlier. I need a central Vault cluster and I will run this in the same cluster as my IDP and every tenant, team, and cloud logs into that same hub.
+That central-broker requirement becomes a single Vault hub: I run it in the same cluster as my IDP, and every tenant, team, and cloud logs into that same hub.
 
-I already knew this part from my experience running Vault Enterprise and Kubernetes — i.e. odd quorum, similar idea as etcd. Taking that into account, 3-node common minimum HA [Raft](https://developer.hashicorp.com/vault/docs/configuration/storage/raft) is what I'm actually running for this, not just a random number I got from the internet.
+I already knew this part from my experience running Vault Enterprise and Kubernetes (odd quorum, similar idea as etcd). Taking that into account, 3-node common minimum HA [Raft](https://developer.hashicorp.com/vault/docs/configuration/storage/raft) is what I'm actually running for this, not just a random number I got from the internet.
 
 ![Multi-tenant HashiCorp Vault OSS hub architecture: clusters authenticate in, identity provider for humans, short-lived credentials out](/posts/vault-hub/architecture.png)
 
@@ -58,21 +58,19 @@ Picture the org as it'll actually look once this is live: a top-level org (I'll 
 If this design works, **payment-api** should read its own secrets without a second thought, and get flatly denied the moment it reaches for anything under retail's **oms** — same policy engine, same Vault instance, nothing but identity telling them apart.
 
 
-I started with the initial design for app-level isolation: I will use AppRole with an ACL policy for each app, so will have 1 policy and role for **payment-api** and 1 policy and AppRole for **oms**. In theory when one app tries to read another app's secret it should get a 403 access denied error.
+I started with the initial design for app-level isolation: one AppRole and one ACL policy per app, so **payment-api** and **oms** each get their own. In theory, reading the other app's secret returns 403.
 
-On paper it looks good, but doing this for two apps I can manage it. What if I need to onboard multiple applications and multiple organizations? Then the entire day goes into writing the policy.hcl files for each, and I need to spend a night trying to fix the issues — where and what is causing the issue. This idea is good when you have a handful of applications and is not the correct architecture path.
+On paper it looks good, but doing this for two apps I can manage it. What if I need to onboard multiple applications and multiple organizations? Then the entire day goes into writing the policy.hcl files for each, and I need to spend a night trying to fix where and what is causing the issue. This idea is good when you have a handful of applications and is not the correct architecture path.
 
-That per-app model *is* the sprawl. The fix is one shared policy template, used by any secrets path, driven by identity entity metadata.
+That per-app model *is* the sprawl. So: one shared policy template for any secrets path, driven by identity entity metadata. Onboarding becomes assigning attributes, not writing new HCL. The entity carries `<OU>/<BU>/<APP_NAME>/<ENV>`.
 
-Why identity entity metadata wins. Without metadata-driven policies, every new application becomes another policy lifecycle to own, review, version, and test. Using identity entity metadata moves onboarding from writing HCL to assigning attributes. The policy ACL stays as a single shared template. So taking my earlier example into consideration, the identity entity carries `<OU>/<BU>/<APP_NAME>/<ENV>`.
+Same path shape for both apps: `test1/finance/payment-api/prod` and `test1/retail/oms/prod`. Same template, different metadata, different result.
 
-Example: For **payment-api**, that's test1/finance/payment-api/prod, and for **oms** it's the same shape, test1/retail/oms/prod, just with different values. Same policy template, different metadata, different result.
-
-Below is what I finalized for the shared policy template. Prefix naming is `{ou}-ou`, then `{bu}/{app_name}/{env}` (plus `{bu}/shared/{env}`). Platform owns new OU/BU prefixes; app teams don't invent paths in PRs without that review.
+Below is what I finalized for that template. Prefix naming is `{ou}-ou`, then `{bu}/{app_name}/{env}` (plus `{bu}/shared/{env}`) with cluster authRole. Platform owns new OU/BU prefixes and app teams only store secrets under those approved paths.
 
 **shared/** is BU-wide on purpose, not cross-tenant. Platform jobs that span BUs need their own entity/policy, not a wider universal template.
 
-You need the exact path and the `/*` path. `vault kv get` hits the exact path; nested keys need the wildcard. Skip that and you'll paste a 403 into prod. Metadata-driven policies still need careful review. A bad template — or one wrong metadata attribute — is a cross-tenant leak or a silent 403 with nice syntax. This hub is a shared dependency: one bad shared template or metadata change can hit every tenant in that OU/BU.
+Metadata-driven policies still need careful review. This hub is a shared dependency. One bad template or wrong metadata attribute can become a cross-tenant leak, or a silent 403 that still looks perfectly valid, across every tenant in that OU/BU.
 
 ```hcl
 # Exact path: what `vault kv get .../prod` hits (without this: 403)
@@ -96,10 +94,9 @@ path "identity/entity/id/{{identity.entity.id}}" {
 }
 ```
 
-Once auth works, the request path is straightforward: the pod presents a Kubernetes JWT, Vault lands on an Identity Entity with metadata, the shared policy expands, and the KV path either allows or returns 403.
+Once auth works, the request path is straightforward: the pod presents a Kubernetes JWT, Vault lands on an Identity Entity with metadata, the template expands, and the KV path either allows or returns 403.
 
-The cluster architecture and policy design is ready. It is time to implement this in lab to make sure what I have sorted aligns with what I am thinking. On paper this looks good and gets me most of the way an Enterprise namespace would have given it for free.
-Like I said, this is my side project so I can miss out on a few things which the Enterprise version offers by default — live native DR, standbys that serve the read, a namespace boundary instead of this policy discipline I have to maintain by hand. I am accepting that gap for now.
+The cluster architecture and policy design is ready. Next step is the lab: prove the allow and deny path actually holds with this layout.
 
 Link for [Part 2](/notes/vault-hub-architecture-part-2/) 
 
